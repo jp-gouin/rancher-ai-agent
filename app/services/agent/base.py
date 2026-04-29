@@ -22,7 +22,7 @@ from ..ui_tools.selector import create_ui_tools_selector, filter_tool
 
 INTERRUPT_CANCEL_MESSAGE = "tool execution cancelled by the user"
 INTERRUPT_PREVIOUS_TOOL_FAILED_MESSAGE = "tool execution cancelled because previous tool call failed"
-MAX_CONSECUTIVE_TOOL_CALLS = 5
+MAX_CONSECUTIVE_TOOL_CALLS = 10
 
 
 class InterruptToolException(Exception):
@@ -759,7 +759,42 @@ You are a highly specialized Assistant. Your primary goal is to provide accurate
         if interrupt_message:
             logging.info(f"Confirmation interrupt triggered for tool '{tool_call.get('name')}', config={'present' if config else 'missing'}")
             
-            ui_tools_list = []
+            """ if interrupt_message:
+                # Dispatch UI tools before the interrupt, so they're available to the client
+                if config is not None:
+                    try:
+                        data = json.loads(interrupt_message.strip('<confirmation-response></confirmation-response>'))
+                        if isinstance(data, list) and len(data) > 0:
+                            data = data[0]
+                            
+                        # Build ui tool
+                        resource = data.get("resource", {})
+                        input = {
+                            "resourceKind": resource.get("kind"),
+                            "resourceName": resource.get("name"),
+                            "resourceNamespace": resource.get("namespace"),
+                        }
+                        ui_tool_name = "show-yaml"
+
+                        if data.get("type") == "create":
+                            input["yaml"] = data.get("payload", {})
+                        else:
+                            ui_tool_name = "show-yaml-diff"
+                            input["original"] = data.get("payload", {}).get("original")
+                            input["patched"] = data.get("payload", {}).get("patched")
+
+                        input = {k: v for k, v in input.items() if v is not None}
+                        
+                        ui_tools_list = [{
+                            "toolName": ui_tool_name,
+                            "input": input,
+                        }]
+                        self._dispatch_preprocessed_ui_tools(state, config, ui_tools_list)
+                    except Exception as e:
+                        logging.debug(f"Could not extract precomputed fields from interrupt message and dispatch UI tools: {e}")
+
+                else:
+                    logging.warning("config is None, cannot dispatch UI tools before confirmation") """
             
             # Dispatch UI tools before the interrupt, so they're available to the client
             if config is not None:
