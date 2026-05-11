@@ -77,8 +77,17 @@ def create_cancel_check_middleware():
 # ---------------------------------------------------------------------------
 
 
-def create_ui_tools_middleware(llm: BaseChatModel):
-    """After-agent middleware: dispatch UI tools when agent produces a final answer (no tool calls)."""
+def create_ui_tools_middleware(llm: BaseChatModel, only_when_direct: bool = False):
+    """After-agent middleware: dispatch UI tools when agent produces a final answer (no tool calls).
+
+    Args:
+        llm: The language model used for UI tools selection.
+        only_when_direct: When True, the middleware only executes if the agent is
+            the direct target of the request (config["configurable"]["agent"] is set).
+            This is used by child agents to avoid dispatching UI tools when invoked
+            by the supervisor (the supervisor has its own ui_tools middleware).
+            When False (default), the middleware always executes — used by the supervisor.
+    """
 
     @after_agent
     def ui_tools_dispatch(state: AgentState, runtime: Runtime) -> dict[str, Any] | None:
@@ -87,6 +96,11 @@ def create_ui_tools_middleware(llm: BaseChatModel):
             return None
 
         config = get_config()
+
+        # When only_when_direct is set, skip if the child is called via supervisor
+        if only_when_direct and not config.get("configurable", {}).get("agent"):
+            return None
+
         ui_tools_list = _dispatch_ui_tools_event(llm, state, config)
 
         if ui_tools_list:

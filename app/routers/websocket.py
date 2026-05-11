@@ -84,6 +84,12 @@ async def websocket_endpoint(websocket: WebSocket, thread_id: str = None, llm: B
         await websocket.close()
         return
 
+    # In single-agent mode (no supervisor), store the agent name so that
+    # the ui_tools middleware knows the child is the direct target.
+    single_agent_name = ""
+    if not isinstance(agent, SupervisorGraph) and len(agents_metadata) == 1:
+        single_agent_name = agents_metadata[0].get("name", "")
+
     await websocket.send_text(build_chat_metadata(thread_id, agents_metadata, websocket))
 
     base_config = {
@@ -103,6 +109,8 @@ async def websocket_endpoint(websocket: WebSocket, thread_id: str = None, llm: B
             request_id = str(uuid.uuid4())
 
             ws_request = _parse_websocket_request(request)
+            if not ws_request.agent and single_agent_name:
+                ws_request.agent = single_agent_name
             config = _build_config(base_config, request_id, ws_request)
             target_agent, target_config = _resolve_target_agent(agent, config, ws_request)
             input_data = await _build_input_data(target_agent, target_config, ws_request)
@@ -369,7 +377,7 @@ def _resolve_target_agent(
     if not requested_agent:
         return agent, config
 
-    if requested_agent not in agent.child_agents:
+    if not hasattr(agent, "child_agents") or requested_agent not in agent.child_agents:
         logging.debug(f"Requested agent '{requested_agent}' not found in child_agents, falling back to supervisor")
         return agent, config
 

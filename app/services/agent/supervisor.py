@@ -6,10 +6,9 @@ This module provides a supervisor agent that wraps each child agent as a callabl
 allowing the LLM to decide which agent(s) to invoke and coordinate their results
 to handle complex, multi-step user requests.
 
-Unlike the parent agent (which routes a request to a single child), the supervisor can
-call multiple agents in sequence and synthesize their outputs into a unified response.
 """
 
+import json
 import logging
 
 from collections.abc import Callable
@@ -252,6 +251,14 @@ def _create_agent_tool(child_agent: ChildAgent) -> BaseTool:
 # =============================================================================
 
 
+def _dispatch_subagent_event(tag: str, name: str, query: str | None = None) -> None:
+    """Dispatch a subagent lifecycle event with a valid JSON payload."""
+    if query is not None:
+        payload: dict = {"name": name}
+        payload["query"] = query
+        dispatch_custom_event("subagent_call", f"<{tag}>{json.dumps(payload)}</{tag}>")
+
+
 def _create_monitor_tool_middleware():
     """Wrap-tool-call middleware: log and dispatch events for supervisor tool calls."""
 
@@ -260,19 +267,21 @@ def _create_monitor_tool_middleware():
         request: ToolCallRequest,
         handler: Callable[[ToolCallRequest], ToolMessage | Command],
     ) -> ToolMessage | Command:
-        if query := request.tool_call["args"].get("query"):
-            dispatch_custom_event("subagent_call", f"<processing-subagent>{{'name':'{request.tool_call['name']}', 'query':'{query}'}}</processing-subagent>")
+        name = request.tool_call["name"]
+        query = request.tool_call["args"].get("query")
+        _dispatch_subagent_event("processing-subagent-start", name, query)
         try:
-            logging.debug(f"Supervisor is invoking tool '{request.tool_call['name']}' with args: {request.tool_call['args']}")
+            logging.debug(f"Supervisor is invoking tool '{name}'")
             result = await handler(request)
-            
+            _dispatch_subagent_event("processing-subagent-end", name, query)
             return result
         except ChildAgentCancelled:
+            _dispatch_subagent_event("processing-subagent-end", name, query)
             # Create a proper ToolMessage so the supervisor's state stays clean,
             # then use Command to route directly to END — skipping the LLM call.
             tool_message = ToolMessage(
                 content=INTERRUPT_CANCEL_MESSAGE,
-                name=request.tool_call["name"],
+                name=name,
                 tool_call_id=request.tool_call["id"],
             )
             return Command(goto="__end__", update={"messages": [tool_message]})

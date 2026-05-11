@@ -64,7 +64,7 @@ def create_child_agent(
         create_cancel_check_middleware(),
         create_inject_request_id_middleware(),
         _create_inject_selected_agent_middleware(agent_config),
-        ## TODO _create_ui_tools_middleware(llm, agent_config),
+        create_ui_tools_middleware(llm, only_when_direct=True),
         SummarizationMiddleware(model=llm, trigger=[("messages", 30), ("tokens", 6000)]),
     ]
 
