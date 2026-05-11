@@ -757,45 +757,10 @@ You are a highly specialized Assistant. Your primary goal is to provide accurate
             raise e
 
         if interrupt_message:
-            logging.info(f"Confirmation interrupt triggered for tool '{tool_call.get('name')}', config={'present' if config else 'missing'}")
+            logging.debug(f"Confirmation interrupt triggered for tool '{tool_call.get('name')}', config={'present' if config else 'missing'}")
             
-            """ if interrupt_message:
-                # Dispatch UI tools before the interrupt, so they're available to the client
-                if config is not None:
-                    try:
-                        data = json.loads(interrupt_message.strip('<confirmation-response></confirmation-response>'))
-                        if isinstance(data, list) and len(data) > 0:
-                            data = data[0]
-                            
-                        # Build ui tool
-                        resource = data.get("resource", {})
-                        input = {
-                            "resourceKind": resource.get("kind"),
-                            "resourceName": resource.get("name"),
-                            "resourceNamespace": resource.get("namespace"),
-                        }
-                        ui_tool_name = "show-yaml"
+            ui_tools_list = []
 
-                        if data.get("type") == "create":
-                            input["yaml"] = data.get("payload", {})
-                        else:
-                            ui_tool_name = "show-yaml-diff"
-                            input["original"] = data.get("payload", {}).get("original")
-                            input["patched"] = data.get("payload", {}).get("patched")
-
-                        input = {k: v for k, v in input.items() if v is not None}
-                        
-                        ui_tools_list = [{
-                            "toolName": ui_tool_name,
-                            "input": input,
-                        }]
-                        self._dispatch_preprocessed_ui_tools(state, config, ui_tools_list)
-                    except Exception as e:
-                        logging.debug(f"Could not extract precomputed fields from interrupt message and dispatch UI tools: {e}")
-
-                else:
-                    logging.warning("config is None, cannot dispatch UI tools before confirmation") """
-            
             # Dispatch UI tools before the interrupt, so they're available to the client
             if config is not None:
                 try:
@@ -838,12 +803,6 @@ You are a highly specialized Assistant. Your primary goal is to provide accurate
             if response != "yes":
                 return False, interrupt_message_result, ui_tools_list
             
-            selected_agent = state.get("selected_agent", {})
-            if selected_agent:
-                dispatch_custom_event(
-                    "subagent_choice_event",
-                    build_agent_metadata(selected_agent.get("name"), selected_agent.get("mode")),
-                )
             return True, interrupt_message_result, ui_tools_list
             
         return True, None, []
