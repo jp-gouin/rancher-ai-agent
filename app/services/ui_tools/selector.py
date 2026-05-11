@@ -220,11 +220,9 @@ Each tool's description explains its scope. Follow it strictly."""
         else:
             self.system_prompt = default_prompt
             
-    def _build_text_prompt(self, agent_config: AgentConfig, context: str, mcp_response: Optional[str]) -> str:
+    def _build_text_prompt(self, context: str, mcp_response: Optional[str]) -> str:
         """Build the text prompt for the LLM based on the agent context and MCP response if available"""
         return f"""Analyze this CONTEXT + MCP RESPONSE (if available) + the SELECTED AGENT used to perform the task, and select appropriate UI tools to enhance the response.
-
-SELECTED AGENT: name: {agent_config.displayName}, description: "{agent_config.description}"
 
 CONTEXT:
 {context}
@@ -235,7 +233,6 @@ If no tools are appropriate, do not invoke any tools."""
 
     def select_tools(
         self,
-        agent_config: AgentConfig, # The agent used to permorm the user request, used to scope tool selection and for better prompt guidance
         context: str,  # Current response/context from agent
         mcp_response: Optional[str] = None,  # Raw MCP response if available for better tool selection
         available_tools: Optional[List[UITool]] = None,
@@ -244,7 +241,6 @@ If no tools are appropriate, do not invoke any tools."""
         Use any LLM to select appropriate UI tools using bind_tools for structured output.
         
         Args:
-            agent_config: The agent configuration using this selector
             context: The response/context to enhance with UI tools
             mcp_response: Raw MCP response if available for better tool selection
             available_tools: List of available tools (uses all if not specified)
@@ -266,7 +262,7 @@ If no tools are appropriate, do not invoke any tools."""
             logging.debug(f"Calling LLM for UI tool selection with bind_tools. Available tools: {[t.name for t in available_tools]}")
             
             # Build the prompt with the agent, context and MCP response if available            
-            text_prompt = self._build_text_prompt(agent_config, context, mcp_response)
+            text_prompt = self._build_text_prompt(context, mcp_response)
             
             user_msg = HumanMessage(content=text_prompt)
             system_msg = SystemMessage(content=self.system_prompt)

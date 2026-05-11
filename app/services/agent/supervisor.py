@@ -30,6 +30,7 @@ from .middleware import (
     INTERRUPT_CANCEL_MESSAGE,
     create_cancel_check_middleware,
     create_inject_request_id_middleware,
+    create_ui_tools_middleware,
 )
 
 
@@ -318,6 +319,7 @@ def create_supervisor_agent(
             _create_monitor_tool_middleware(),
             create_cancel_check_middleware(),
             create_inject_request_id_middleware(),
+            create_ui_tools_middleware(llm),
             SummarizationMiddleware(model=llm, trigger=[("messages", 30), ("tokens", 6000)]),
         ],
     )

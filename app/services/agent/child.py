@@ -13,7 +13,6 @@ from collections.abc import Callable
 from typing import Any
 
 import langgraph.types
-import yaml
 from langchain.agents import create_agent
 from langchain.agents.middleware import (
     AgentState,
@@ -25,18 +24,17 @@ from langchain.messages import AIMessage, ToolMessage
 from langchain.tools.tool_node import ToolCallRequest
 from langchain_core.callbacks.manager import dispatch_custom_event
 from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.messages import HumanMessage
 from langchain_core.tools import BaseTool
 from langgraph.config import get_config
 from langgraph.graph.state import Checkpointer, CompiledStateGraph
 from langgraph.runtime import Runtime
 from langgraph.types import Command
 
-from ..ui_tools.loader import load_ui_tools_from_configmap
-from ..ui_tools.selector import create_ui_tools_selector, filter_tool
 from .loader import AgentConfig
 from .middleware import (
     INTERRUPT_CANCEL_MESSAGE,
+    create_ui_tools_middleware,
+    _dispatch_ui_tools,
     create_cancel_check_middleware,
     create_inject_request_id_middleware,
 )
@@ -66,7 +64,7 @@ def create_child_agent(
         create_cancel_check_middleware(),
         create_inject_request_id_middleware(),
         _create_inject_selected_agent_middleware(agent_config),
-        _create_ui_tools_middleware(llm, agent_config),
+        ## TODO _create_ui_tools_middleware(llm, agent_config),
         SummarizationMiddleware(model=llm, trigger=[("messages", 30), ("tokens", 6000)]),
     ]
 
@@ -101,33 +99,6 @@ def _create_inject_selected_agent_middleware(agent_config: AgentConfig):
         return {"messages": [last_message]}
 
     return inject_selected_agent
-
-
-def _create_ui_tools_middleware(llm: BaseChatModel, agent_config: AgentConfig):
-    """After-model middleware: dispatch UI tools when agent produces a final answer (no tool calls)."""
-
-    @after_model
-    def ui_tools_dispatch(state: AgentState, runtime: Runtime) -> dict[str, Any] | None:
-        last_message = state["messages"][-1] if state["messages"] else None
-        if not isinstance(last_message, AIMessage):
-            return None
-
-        # Only run when the model is NOT calling tools (i.e. producing a final answer)
-        if getattr(last_message, "tool_calls", None):
-            return None
-
-        config = get_config()
-        ui_tools_list = _dispatch_ui_tools_event(llm, agent_config, state, config)
-
-        if ui_tools_list:
-            request_id = config.get("configurable", {}).get("request_id")
-            if request_id:
-                last_message.additional_kwargs["ui_tools"] = ui_tools_list
-                return {"messages": [last_message]}
-
-        return None
-
-    return ui_tools_dispatch
 
 
 def _create_tool_execution_middleware(
@@ -292,158 +263,6 @@ def _build_interrupt_ui_tools(
     ui_tools_list = [{"toolName": ui_tool_name, "input": tool_input}]
     _dispatch_ui_tools(ui_tools_list)
     return ui_tools_list
-
-
-
-def _dispatch_ui_tools_event(
-    llm: BaseChatModel,
-    agent_config: AgentConfig,
-    state: dict,
-    config: dict,
-) -> list[dict]:
-    """Select and dispatch UI tools based on the current conversation state.
-
-    Returns:
-        List of selected UI tools, or empty list if dispatch was skipped.
-    """
-    try:
-        request_metadata = config.get("configurable", {}).get("request_metadata", {})
-        ui_tools_config = request_metadata.get("ui_tools", {})
-
-        logging.debug(f"_dispatch_ui_tools_event: config={ui_tools_config}")
-
-        name = ui_tools_config.get("name", "")
-        tool_filters = ui_tools_config.get("tools", [])
-
-        if not name:
-            logging.debug("UI tools config name is missing, skipping ui tools dispatch")
-            return []
-
-        if not tool_filters:
-            logging.debug("UI tools list is empty, skipping ui tools dispatch")
-            return []
-
-        ui_tools_config_data = load_ui_tools_from_configmap(name)
-
-        if not ui_tools_config_data or not ui_tools_config_data.config:
-            logging.debug(f"UI tools config {name} not found, skipping ui tools dispatch")
-            return []
-
-        if not ui_tools_config_data.config.enabled:
-            logging.debug(f"UI tools config {name} are disabled, skipping ui tools dispatch")
-            return []
-
-        filtered_tools = [t for t in ui_tools_config_data.tools if filter_tool(t, tool_filters)]
-        logging.debug(
-            f"Filtered UI tools: {[t.name for t in filtered_tools]} "
-            f"based on filters: {tool_filters}"
-        )
-
-        if not filtered_tools:
-            logging.debug("No UI tools available after filtering, skipping ui tools dispatch")
-            return []
-
-        user_message, ai_message, mcp_response, mcp_data = _extract_context_for_tool_selection(
-            state, config
-        )
-
-        system_prompt = ui_tools_config_data.config.system_prompt
-        max_tools = ui_tools_config_data.config.max_tools
-
-        selector = create_ui_tools_selector(llm, system_prompt=system_prompt, max_tools=max_tools)
-
-        dispatch_custom_event("notify_processing", "<processing-ui-tools/>")
-
-        ui_tools_list = selector.select_tools(
-            agent_config=agent_config,
-            context=user_message + ai_message,
-            mcp_response=mcp_response + mcp_data,
-            available_tools=filtered_tools,
-        )
-
-        _dispatch_ui_tools(ui_tools_list)
-        return ui_tools_list
-    except Exception as e:
-        logging.error(f"Error dispatching UI tools event: {e}", exc_info=True)
-        return []
-
-
-def _extract_context_for_tool_selection(
-    state: dict,
-    config: dict,
-) -> tuple[str, str, str, str]:
-    """Extract context from the conversation for UI tool selection.
-
-    Returns:
-        ``(user_message, ai_message, mcp_response, mcp_data)``
-    """
-    request_id = config.get("configurable", {}).get("request_id", "")
-    user_message = ""
-    ai_message = ""
-    mcp_data = ""
-
-    for msg in reversed(state.get("messages", [])[-10:]):
-        additional_kwargs = msg.additional_kwargs if hasattr(msg, "additional_kwargs") else {}
-
-        if request_id != additional_kwargs.get("request_id", ""):
-            break
-
-        if user_message and ai_message and mcp_data:
-            break
-
-        if hasattr(msg, "text") and isinstance(msg.text, str):
-            if isinstance(msg, HumanMessage) and not user_message:
-                if "request_metadata" in additional_kwargs:
-                    rm = additional_kwargs["request_metadata"]
-                    user_input = rm.get("user_input", "")
-                    context = rm.get("context", {})
-                    user_message += f"\n[User Message]: {user_input} - ui context: {context}"
-                if not user_message:
-                    user_message += f"\n[User Message]: {msg.text}"
-            elif isinstance(msg, AIMessage) and not ai_message:
-                ai_message += f"\n[Assistant Message]: {msg.text}"
-            elif isinstance(msg, ToolMessage) and not mcp_data:
-                mcp_data = _convert_tool_message_to_context(msg.content)
-
-    mcp_response = _extract_mcp_responses(state)
-    return user_message, ai_message, mcp_response, mcp_data
-
-
-def _convert_tool_message_to_context(content: str) -> str:
-    """Convert tool message content to YAML-formatted context."""
-    try:
-        parsed = json.loads(content)
-        if isinstance(parsed, list):
-            yaml_parts = [yaml.dump(item, default_flow_style=False, sort_keys=False) for item in parsed]
-            content = "---\n".join(yaml_parts)
-        elif isinstance(parsed, dict):
-            content = yaml.dump(parsed, default_flow_style=False, sort_keys=False)
-    except (json.JSONDecodeError, TypeError):
-        pass
-    return f"\n[MCP result payloads]: {content}"
-
-
-def _extract_mcp_responses(state: dict) -> str:
-    """Extract MCP response resources from all messages."""
-    mcp_response = ""
-    for msg in reversed(state.get("messages", [])):
-        additional_kwargs = msg.additional_kwargs if hasattr(msg, "additional_kwargs") else {}
-        if "mcp_response" in additional_kwargs:
-            mcp_response += f"\n{additional_kwargs['mcp_response'].strip('<mcp-response></mcp-response>')}"
-    if mcp_response:
-        mcp_response = "\n[MCP result resources]: " + mcp_response
-    return mcp_response
-
-
-def _dispatch_ui_tools(tools: list[dict]) -> None:
-    """Dispatch a ``ui_tools`` custom event with the given tools list."""
-    try:
-        ui_tools_json = json.dumps(tools)
-        ui_tools_event = f"<ui-tools>{ui_tools_json}</ui-tools>"
-        dispatch_custom_event("ui_tools", ui_tools_event)
-        logging.debug(f"Dispatched {len(tools)} UI tool(s): {[t['toolName'] for t in tools]}")
-    except Exception as e:
-        logging.error(f"Error dispatching UI tools: {e}", exc_info=True)
 
 
 def _build_agent_metadata(agent_name: str, selection_mode: str, extra_metadata: str = "") -> str:
