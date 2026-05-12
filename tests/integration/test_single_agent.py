@@ -363,7 +363,7 @@ def test_websocket_with_ui_tools():
             mock_load.return_value = [agent_config]
             
             # Patch load_ui_tools_from_configmap to return our UI tools config
-            with patch('app.services.agent.child.load_ui_tools_from_configmap') as mock_load_configmap:
+            with patch('app.services.agent.middleware.load_ui_tools_from_configmap') as mock_load_configmap:
                 # Setup to return the UI tool and config directly
                 ui_tools_config = UIToolsConfigData(
                     tools=[ui_tool],
@@ -372,7 +372,7 @@ def test_websocket_with_ui_tools():
                 mock_load_configmap.return_value = ui_tools_config
                 
                 # Mock the UI tools selector
-                with patch('app.services.agent.child.create_ui_tools_selector') as mock_selector_factory:
+                with patch('app.services.agent.middleware.create_ui_tools_selector') as mock_selector_factory:
                     mock_selector = MagicMock()
                     mock_selector_factory.return_value = mock_selector
                     # Mock select_tools to return a formatted UI tool

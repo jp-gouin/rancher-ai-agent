@@ -15,19 +15,16 @@ from typing import Any
 import langgraph.types
 from langchain.agents import create_agent
 from langchain.agents.middleware import (
-    AgentState,
     SummarizationMiddleware,
-    after_model,
     wrap_tool_call,
 )
-from langchain.messages import AIMessage, ToolMessage
+from langchain.messages import ToolMessage
 from langchain.tools.tool_node import ToolCallRequest
 from langchain_core.callbacks.manager import dispatch_custom_event
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.tools import BaseTool
 from langgraph.config import get_config
 from langgraph.graph.state import Checkpointer, CompiledStateGraph
-from langgraph.runtime import Runtime
 from langgraph.types import Command
 
 from .loader import AgentConfig
@@ -63,7 +60,6 @@ def create_child_agent(
         _create_tool_execution_middleware(llm, planning_tools_by_name, agent_config),
         create_cancel_check_middleware(),
         create_inject_request_id_middleware(),
-        _create_inject_selected_agent_middleware(agent_config),
         create_ui_tools_middleware(llm, only_when_direct=True),
         SummarizationMiddleware(model=llm, trigger=[("messages", 30), ("tokens", 6000)]),
     ]
@@ -78,27 +74,8 @@ def create_child_agent(
 
 
 # =============================================================================
-# Middleware factories
+# Middleware 
 # =============================================================================
-
-
-def _create_inject_selected_agent_middleware(agent_config: AgentConfig):
-    """After-model middleware: inject selected_agent into the last AIMessage."""
-
-    @after_model
-    def inject_selected_agent(state: AgentState, runtime: Runtime) -> dict[str, Any] | None:
-        if not state["messages"]:
-            return None
-
-        last_message = state["messages"][-1]
-        if not isinstance(last_message, AIMessage):
-            return None
-
-        last_message.additional_kwargs["selected_agent"] = state.get("selected_agent", {})
-
-        return {"messages": [last_message]}
-
-    return inject_selected_agent
 
 
 def _create_tool_execution_middleware(

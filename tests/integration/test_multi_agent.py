@@ -275,9 +275,11 @@ def test_single_prompt():
         assert full_message.endswith("</message>"), "Message should end with </message>"
         
         # The supervisor dispatches a subagent_call custom event
-        assert f"<processing-subagent>{{'name':'{MATH_AGENT_NAME}', 'query':'{fake_prompt}'}}</processing-subagent>" in full_message, \
+        assert f'<processing-subagent-start>{{"name": "{MATH_AGENT_NAME}", "query": "{fake_prompt}"}}</processing-subagent-start>' in full_message, \
             "Should contain supervisor's subagent call notification"
-        
+        assert f'<processing-subagent-end>{{"name": "{MATH_AGENT_NAME}", "query": "{fake_prompt}"}}</processing-subagent-end>' in full_message, \
+            "Should contain supervisor's subagent call completion notification"
+
         # The supervisor's final response should be streamed
         assert "The math agent says the answer is ready." in full_message, \
             "Should contain supervisor's final response"
@@ -360,11 +362,13 @@ def test_multiple_prompts():
                 messages.extend(msgs)
             
         # Verify first message
-        assert f"<processing-subagent>{{'name':'{MATH_AGENT_NAME}', 'query':'{fake_prompt_1}'}}</processing-subagent>" in messages[0]
+        assert f'<processing-subagent-start>{{"name": "{MATH_AGENT_NAME}", "query": "{fake_prompt_1}"}}</processing-subagent-start>' in messages[0]
+        assert f'<processing-subagent-end>{{"name": "{MATH_AGENT_NAME}", "query": "{fake_prompt_1}"}}</processing-subagent-end>' in messages[0]
         assert fake_supervisor_response_1 in messages[0]
         
         # Verify second message
-        assert f"<processing-subagent>{{'name':'{CALCULATOR_AGENT_NAME}', 'query':'{fake_prompt_2}'}}</processing-subagent>" in messages[1]
+        assert f'<processing-subagent-start>{{"name": "{CALCULATOR_AGENT_NAME}", "query": "{fake_prompt_2}"}}</processing-subagent-start>' in messages[1]
+        assert f'<processing-subagent-end>{{"name": "{CALCULATOR_AGENT_NAME}", "query": "{fake_prompt_2}"}}</processing-subagent-end>' in messages[1]
         assert fake_supervisor_response_2 in messages[1]
         
         # 6 LLM calls: 2 supervisor + 1 child per prompt = 3 * 2 = 6
@@ -428,8 +432,9 @@ def test_delegate_to_child_agent_with_tool():
         full_message = messages[0]
         
         # Verify supervisor's subagent call notification
-        assert f"<processing-subagent>{{'name':'{MATH_AGENT_NAME}', 'query':'{fake_prompt}'}}</processing-subagent>" in full_message
-        
+        assert f'<processing-subagent-start>{{"name": "{MATH_AGENT_NAME}", "query": "{fake_prompt}"}}</processing-subagent-start>' in full_message
+        assert f'<processing-subagent-end>{{"name": "{MATH_AGENT_NAME}", "query": "{fake_prompt}"}}</processing-subagent-end>' in full_message
+
         # Verify supervisor's final response
         assert "The math agent calculated that 4 + 5 = 9." in full_message
         
@@ -526,7 +531,7 @@ def test_delegate_to_child_agent_with_ui_tools():
             mock_load.return_value = [math_config, calc_config]
             
             # Patch load_ui_tools_from_configmap to return our UI tools config
-            with patch('app.services.agent.child.load_ui_tools_from_configmap') as mock_load_configmap:
+            with patch('app.services.agent.middleware.load_ui_tools_from_configmap') as mock_load_configmap:
                 ui_tools_config = UIToolsConfigData(
                     tools=[ui_tool],
                     config=UIToolsConfig(enabled=True, max_tools=5, system_prompt="Select relevant UI tools")
@@ -534,7 +539,7 @@ def test_delegate_to_child_agent_with_ui_tools():
                 mock_load_configmap.return_value = ui_tools_config
                 
                 # Mock the UI tools selector
-                with patch('app.services.agent.child.create_ui_tools_selector') as mock_selector_factory:
+                with patch('app.services.agent.middleware.create_ui_tools_selector') as mock_selector_factory:
                     mock_selector = MagicMock()
                     mock_selector_factory.return_value = mock_selector
                     mock_selector.select_tools.return_value = [
