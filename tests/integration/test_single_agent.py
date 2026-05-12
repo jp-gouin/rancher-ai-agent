@@ -1,6 +1,7 @@
 from fastapi.testclient import TestClient
 from app.main import app
 from app.services.agent.loader import RANCHER_AGENT_PROMPT, AgentConfig, AuthenticationType
+from app.services.agent.system_prompts import IDENTITY_PREAMBLE
 from app.services.llm import LLMManager
 from app.services.memory import StorageType
 from mcp.server.fastmcp import FastMCP
@@ -116,6 +117,7 @@ def test_websocket_single_prompt():
         assert fake_llm.all_calls[0] == [
             SystemMessage(content=RANCHER_AGENT_PROMPT),
             HumanMessage(content="fake prompt"),
+            SystemMessage(content=IDENTITY_PREAMBLE),
         ], "First call should have system prompt and user message"
     finally:
         LLMManager._instance = None
@@ -154,10 +156,12 @@ def test_websocket_multiple_prompts():
         assert fake_llm.all_calls[0] == [
             SystemMessage(content=RANCHER_AGENT_PROMPT),
             HumanMessage(content="fake prompt 1"),
+            SystemMessage(content=IDENTITY_PREAMBLE),
         ], "First call should have system prompt and first user message"
         assert fake_llm.all_calls[1] == [
             SystemMessage(content=RANCHER_AGENT_PROMPT),
             HumanMessage(content="fake prompt 1"),
+            SystemMessage(content=IDENTITY_PREAMBLE),
             AIMessage(content="fake llm response 1"),
             HumanMessage(content="fake prompt 2"),
         ], "Second call should include conversation history"
@@ -202,13 +206,15 @@ def test_websocket_tool_call():
         assert fake_llm.all_calls[0] == [
             SystemMessage(content=RANCHER_AGENT_PROMPT),
             HumanMessage(content="sum 4 + 5"),
+            SystemMessage(content=IDENTITY_PREAMBLE),
         ], "First call should have system prompt and user message"
         # Second call includes tool call and result
         second_call = fake_llm.all_calls[1]
         assert second_call[0] == SystemMessage(content=RANCHER_AGENT_PROMPT), "Second call should have system prompt"
         assert second_call[1] == HumanMessage(content="sum 4 + 5"), "Second call should have user message"
-        assert isinstance(second_call[2], AIMessage) and second_call[2].tool_calls[0]["name"] == "add", "Second call should have AI message with tool call"
-        assert isinstance(second_call[3], ToolMessage) and second_call[3].content == "sum is 9", "Second call should have tool result"
+        assert second_call[2] == SystemMessage(content=IDENTITY_PREAMBLE), "Second call should have identity preamble"
+        assert isinstance(second_call[3], AIMessage) and second_call[3].tool_calls[0]["name"] == "add", "Second call should have AI message with tool call"
+        assert isinstance(second_call[4], ToolMessage) and second_call[4].content == "sum is 9", "Second call should have tool result"
     finally:
         LLMManager._instance = None
 
@@ -267,12 +273,14 @@ def test_conversation_history():
         assert fake_llm.all_calls[0] == [
             SystemMessage(content=RANCHER_AGENT_PROMPT),
             HumanMessage(content=fake_prompt_1),
+            SystemMessage(content=IDENTITY_PREAMBLE),
         ], "First call should have system prompt and first user message"
         
         # Second call - prompt 1 + response 1 + prompt 2
         assert fake_llm.all_calls[1] == [
             SystemMessage(content=RANCHER_AGENT_PROMPT),
             HumanMessage(content=fake_prompt_1),
+            SystemMessage(content=IDENTITY_PREAMBLE),
             AIMessage(content=fake_llm_response_1),
             HumanMessage(content=fake_prompt_2),
         ], "Second call should include conversation history"
@@ -281,6 +289,7 @@ def test_conversation_history():
         assert fake_llm.all_calls[2] == [
             SystemMessage(content=RANCHER_AGENT_PROMPT),
             HumanMessage(content=fake_prompt_1),
+            SystemMessage(content=IDENTITY_PREAMBLE),
             AIMessage(content=fake_llm_response_1),
             HumanMessage(content=fake_prompt_2),
             AIMessage(content=fake_llm_response_2),
@@ -291,6 +300,7 @@ def test_conversation_history():
         assert fake_llm.all_calls[3] == [
             SystemMessage(content=RANCHER_AGENT_PROMPT),
             HumanMessage(content=fake_prompt_1),
+            SystemMessage(content=IDENTITY_PREAMBLE),
             AIMessage(content=fake_llm_response_1),
             HumanMessage(content=fake_prompt_2),
             AIMessage(content=fake_llm_response_2),
@@ -303,6 +313,7 @@ def test_conversation_history():
         assert fake_llm.all_calls[4] == [
             SystemMessage(content=RANCHER_AGENT_PROMPT),
             HumanMessage(content=fake_prompt_1),
+            SystemMessage(content=IDENTITY_PREAMBLE),
             AIMessage(content=fake_llm_response_1),
             HumanMessage(content=fake_prompt_2),
             AIMessage(content=fake_llm_response_2),
@@ -412,6 +423,7 @@ def test_websocket_with_ui_tools():
                     assert len(fake_llm.all_calls) == 1, "Expected 1 LLM call"
                     assert fake_llm.all_calls[0][0].content == RANCHER_AGENT_PROMPT, "LLM should receive system prompt"
                     assert "show me the resource" in fake_llm.all_calls[0][1].content, "LLM should receive user prompt"
+                    assert fake_llm.all_calls[0][2].content == IDENTITY_PREAMBLE, "LLM should receive identity preamble"
                     
                     # Verify dispatch correctness: processing message sent
                     assert "<processing-ui-tools/>" in full_stream, "Missing <processing-ui-tools/> dispatch message"

@@ -15,17 +15,22 @@ from typing import Any
 import langgraph.types
 from langchain.agents import create_agent
 from langchain.agents.middleware import (
+    AgentState,
     SummarizationMiddleware,
+    before_model,
     wrap_tool_call,
 )
 from langchain.messages import ToolMessage
 from langchain.tools.tool_node import ToolCallRequest
 from langchain_core.callbacks.manager import dispatch_custom_event
 from langchain_core.language_models.chat_models import BaseChatModel
+from langchain_core.messages import SystemMessage
 from langchain_core.tools import BaseTool
 from langgraph.config import get_config
 from langgraph.graph.state import Checkpointer, CompiledStateGraph
+from langgraph.runtime import Runtime
 from langgraph.types import Command
+from .system_prompts import IDENTITY_PREAMBLE
 
 from .loader import AgentConfig
 from .middleware import (
@@ -57,7 +62,8 @@ def create_child_agent(
     planning_tools_by_name = {t.name: t for t in planning_tools}
 
     middleware = [
-        _create_tool_execution_middleware(llm, planning_tools_by_name, agent_config),
+        _create_tool_execution_middleware(planning_tools_by_name, agent_config),
+        _create_identity_preamble_middleware(),
         create_cancel_check_middleware(),
         create_inject_request_id_middleware(),
         create_ui_tools_middleware(llm, only_when_direct=True),
@@ -74,12 +80,31 @@ def create_child_agent(
 
 
 # =============================================================================
-# Middleware 
+# Middleware
+# =============================================================================
+
+
+def _create_identity_preamble_middleware():
+    """Before-model middleware: inject IDENTITY_PREAMBLE only when child is called directly."""
+
+    @before_model
+    def inject_identity_preamble(state: AgentState, runtime: Runtime) -> dict[str, Any] | None:
+        config = get_config()
+        # Only inject when child is called directly (not via supervisor)
+        if not config.get("configurable", {}).get("agent"):
+            return None
+
+        return {"messages": [SystemMessage(content=IDENTITY_PREAMBLE, id="identity_preamble")]}
+
+    return inject_identity_preamble
+
+
+# =============================================================================
+# Tool execution middleware 
 # =============================================================================
 
 
 def _create_tool_execution_middleware(
-    llm: BaseChatModel,
     planning_tools_by_name: dict[str, BaseTool],
     agent_config: AgentConfig,
 ):
