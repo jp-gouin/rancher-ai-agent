@@ -14,10 +14,12 @@ from langchain_core.messages import AIMessage
 
 from app.services.agent.supervisor import (
     ChildAgent,
+    ChildAgentCancelled,
     create_supervisor_agent,
     _build_child_config,
     _extract_last_message,
     _create_agent_tool,
+    _create_subagent_event_middleware,
 )
 from app.services.agent.loader import AgentConfig, AuthenticationType
 
@@ -521,3 +523,69 @@ async def test_invoke_resume_child_interrupts_again(child_agent, mock_compiled_g
     assert len(interrupt_calls) == 2
     assert interrupt_calls[0] == "<confirmation-response>first tool plan</confirmation-response>"
     assert interrupt_calls[1] == "<confirmation-response>second tool plan</confirmation-response>"
+
+
+# ============================================================================
+# _create_subagent_event_middleware Tests
+# ============================================================================
+
+
+class TestCreateSubagentEventMiddleware:
+    """Tests for _create_subagent_event_middleware."""
+
+    @pytest.fixture
+    def mock_request(self):
+        """Mock ToolCallRequest with a query argument."""
+        request = MagicMock()
+        request.tool_call = {"name": "rancher", "args": {"query": "get pods"}, "id": "call-123"}
+        return request
+
+    @pytest.fixture
+    def middleware_fn(self):
+        """Inner monitor_tool with wrap_tool_call bypassed (identity decorator)."""
+        with patch("app.services.agent.supervisor.wrap_tool_call", lambda f: f):
+            fn = _create_subagent_event_middleware()
+        return fn
+
+    @pytest.mark.asyncio
+    async def test_success_dispatches_events_and_returns_result(self, middleware_fn, mock_request):
+        """On success: start/end events are dispatched with correct args and the handler result is returned."""
+        from langchain_core.messages import ToolMessage
+        expected = ToolMessage(content="ok", name="rancher", tool_call_id="call-123")
+        handler = AsyncMock(return_value=expected)
+        dispatch_calls = []
+
+        with patch(
+            "app.services.agent.supervisor._dispatch_subagent_event",
+            side_effect=lambda tag, name, query=None: dispatch_calls.append((tag, name, query)),
+        ):
+            result = await middleware_fn(mock_request, handler)
+
+        assert result is expected
+        assert dispatch_calls == [
+            ("processing-subagent-start", "rancher", "get pods"),
+            ("processing-subagent-end", "rancher", "get pods"),
+        ]
+
+    @pytest.mark.asyncio
+    async def test_cancellation_returns_end_command_with_cancel_message(self, middleware_fn, mock_request):
+        """ChildAgentCancelled dispatches the end event and returns Command(goto='__end__')
+        whose update contains a ToolMessage with INTERRUPT_CANCEL_MESSAGE."""
+        from langgraph.types import Command
+        from app.services.agent.middleware import INTERRUPT_CANCEL_MESSAGE
+        handler = AsyncMock(side_effect=ChildAgentCancelled("rancher"))
+        dispatch_tags = []
+
+        with patch(
+            "app.services.agent.supervisor._dispatch_subagent_event",
+            side_effect=lambda tag, name, query=None: dispatch_tags.append(tag),
+        ):
+            result = await middleware_fn(mock_request, handler)
+
+        assert "processing-subagent-end" in dispatch_tags
+        assert isinstance(result, Command)
+        assert result.goto == "__end__"
+        messages = result.update["messages"]
+        assert len(messages) == 1
+        assert messages[0].content == INTERRUPT_CANCEL_MESSAGE
+        assert messages[0].tool_call_id == "call-123"

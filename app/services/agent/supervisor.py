@@ -259,7 +259,7 @@ def _dispatch_subagent_event(tag: str, name: str, query: str | None = None) -> N
         dispatch_custom_event("subagent_call", f"<{tag}>{json.dumps(payload)}</{tag}>")
 
 
-def _create_monitor_tool_middleware():
+def _create_subagent_event_middleware():
     """Wrap-tool-call middleware: log and dispatch events for supervisor tool calls."""
 
     @wrap_tool_call
@@ -325,7 +325,7 @@ def create_supervisor_agent(
         checkpointer=checkpointer,
         name="supervisor",
         middleware=[
-            _create_monitor_tool_middleware(),
+            _create_subagent_event_middleware(),
             create_cancel_check_middleware(),
             create_inject_request_id_middleware(),
             create_ui_tools_middleware(llm),
