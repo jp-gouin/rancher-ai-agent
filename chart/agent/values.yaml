@@ -53,6 +53,11 @@ probes:
     timeoutSeconds: 5
     failureThreshold: 2
 insecureSkipTls: false
+rancherUrl: "https://rancher.cattle-system.svc"
+sanitization:
+  kubernetesSecret:
+    enabled: true
+recursionLimit: 300
 seLinux:
   enabled: false
 llmMock:

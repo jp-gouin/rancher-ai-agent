@@ -164,10 +164,10 @@ class CABundleRef(BaseModel):
 
 class AgentConfig(BaseModel):
     """Configuration for a single agent."""
-    name: str 
+    name: str
     displayName: str
-    description: str 
-    system_prompt: str 
+    description: str
+    system_prompt: str
     mcp_url: str
     authentication: AuthenticationType = AuthenticationType.NONE
     authentication_secret: Optional[str] = None
@@ -307,7 +307,7 @@ def _crd_to_agent_config(crd_obj: dict) -> AgentConfig:
     human_validation_tools = []
     for tool in spec.get("humanValidationTools", []):
         human_validation_tools.append(tool)
-    
+
     return AgentConfig(
         name=metadata.get("name", ""),
         displayName=spec.get("displayName", ""),
@@ -347,7 +347,7 @@ def _get_default_ai_agent_config_crds() -> list:
                     "key": "tls.crt"
                 },
                 "humanValidationTools": [
-                    "createKubernetesResource", 
+                    "createKubernetesResource",
                     "patchKubernetesResource",
                     "createProject"
                 ]
@@ -398,7 +398,7 @@ def _get_default_ai_agent_config_crds() -> list:
                 "humanValidationTools": [
                     "createImportedCluster",
                     "scaleClusterNodePool",
-                    "createK3kCluster"                
+                    "createK3kCluster"
                 ]
             }
         }

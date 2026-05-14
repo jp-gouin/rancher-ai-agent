@@ -10,6 +10,7 @@ to handle complex, multi-step user requests.
 
 import json
 import logging
+import os
 
 from collections.abc import Callable
 from langchain.agents import create_agent
@@ -139,7 +140,11 @@ def _build_child_config(agent_name: str) -> dict:
         "thread_id": f"{parent_thread_id}::child::{agent_name}",
         **{k: parent_configurable[k] for k in _FORWARDED_CONFIG_KEYS if k in parent_configurable},
     }
-    return {"configurable": child_configurable, "callbacks": []}
+    return {
+        "configurable": child_configurable,
+        "callbacks": [],
+        "recursion_limit": int(os.environ.get("RECURSION_LIMIT", "300")),
+    }
 
 
 def _extract_last_message(result: dict) -> str:

@@ -22,6 +22,7 @@ from app.services.agent.middleware import (
     _dispatch_ui_tools,
     _dispatch_ui_tools_event,
 )
+from langchain.agents.middleware import PIIMiddleware
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.tools import tool as langchain_tool
 
@@ -81,6 +82,69 @@ def test_create_child_agent_returns_compiled_graph(mock_llm, mock_checkpointer):
     assert graph is not None
     # It should have an invoke method (compiled graph)
     assert hasattr(graph, "ainvoke") or hasattr(graph, "invoke")
+
+
+# ============================================================================
+# create_child_agent middleware composition Tests
+# ============================================================================
+
+
+def _captured_middleware(mock_llm, mock_checkpointer, agent_config):
+    """Build a child agent with create_agent patched, return the middleware list passed to it."""
+    tools = [_make_langchain_tool("testTool")]
+    with patch("app.services.agent.child.create_agent") as mock_create_agent:
+        mock_create_agent.return_value = MagicMock()
+        create_child_agent(
+            llm=mock_llm,
+            tools=tools,
+            system_prompt="You are a helpful assistant",
+            checkpointer=mock_checkpointer,
+            agent_config=agent_config,
+        )
+        return mock_create_agent.call_args.kwargs["middleware"]
+
+
+def test_create_child_agent_includes_pii_middleware_by_default(
+    mock_llm, mock_checkpointer, monkeypatch
+):
+    """K8s secret PII middleware is wired in when SANITIZATION_KUBERNETES_SECRET_ENABLED is unset (default true)."""
+    monkeypatch.delenv("SANITIZATION_KUBERNETES_SECRET_ENABLED", raising=False)
+    agent_config = MagicMock()
+    agent_config.human_validation_tools = []
+
+    middleware = _captured_middleware(mock_llm, mock_checkpointer, agent_config)
+
+    pii_mws = [m for m in middleware if isinstance(m, PIIMiddleware)]
+    assert len(pii_mws) == 1
+    assert pii_mws[0].pii_type == "kubernetes_secret"
+
+
+def test_create_child_agent_includes_pii_middleware_when_enabled(
+    mock_llm, mock_checkpointer, monkeypatch
+):
+    """K8s secret PII middleware is wired in when explicitly enabled via env var."""
+    monkeypatch.setenv("SANITIZATION_KUBERNETES_SECRET_ENABLED", "true")
+    agent_config = MagicMock()
+    agent_config.human_validation_tools = []
+
+    middleware = _captured_middleware(mock_llm, mock_checkpointer, agent_config)
+
+    pii_mws = [m for m in middleware if isinstance(m, PIIMiddleware)]
+    assert len(pii_mws) == 1
+    assert pii_mws[0].pii_type == "kubernetes_secret"
+
+
+def test_create_child_agent_omits_pii_middleware_when_disabled(
+    mock_llm, mock_checkpointer, monkeypatch
+):
+    """K8s secret PII middleware is not added when env var is set to false."""
+    monkeypatch.setenv("SANITIZATION_KUBERNETES_SECRET_ENABLED", "false")
+    agent_config = MagicMock()
+    agent_config.human_validation_tools = []
+
+    middleware = _captured_middleware(mock_llm, mock_checkpointer, agent_config)
+
+    assert not any(isinstance(m, PIIMiddleware) for m in middleware)
 
 
 # ============================================================================

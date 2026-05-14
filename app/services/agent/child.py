@@ -9,6 +9,7 @@ and automatic retry on malformed tool calls.
 
 import json
 import logging
+import os
 from collections.abc import Callable
 from typing import Any
 
@@ -32,6 +33,7 @@ from langgraph.runtime import Runtime
 from langgraph.types import Command
 from .system_prompts import IDENTITY_PREAMBLE
 
+from .k8s_secret_pii import create_k8s_secret_pii_middleware
 from .loader import AgentConfig
 from .middleware import (
     INTERRUPT_CANCEL_MESSAGE,
@@ -69,6 +71,9 @@ def create_child_agent(
         create_ui_tools_middleware(llm, only_when_direct=True),
         SummarizationMiddleware(model=llm, trigger=[("messages", 30), ("tokens", 6000)]),
     ]
+
+    if os.environ.get("SANITIZATION_KUBERNETES_SECRET_ENABLED", "true").lower() == "true":
+        middleware.append(create_k8s_secret_pii_middleware())
 
     return create_agent(
         llm,
