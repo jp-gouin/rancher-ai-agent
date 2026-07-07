@@ -12,6 +12,10 @@ rules:
 - apiGroups: ["authorization.k8s.io"]
   resources: ["subjectaccessreviews"]
   verbs: ["create"]
+# Resolve a user's Rancher Global Permissions for AI agent RBAC filtering.
+- apiGroups: ["management.cattle.io"]
+  resources: ["globalrolebindings"]
+  verbs: ["get", "list"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole

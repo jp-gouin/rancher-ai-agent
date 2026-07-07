@@ -70,3 +70,53 @@ Because the child agent is invoked via `ainvoke()` (not as a subgraph), a `Graph
 The `cancel_human_validation_middleware` (`app/services/agent/middleware/cancel_check.py`) is a `@before_model` middleware registered on both the supervisor and child agents. After a human validation interrupt is resumed with a rejection (anything other than `"yes"`), the child returns a `ToolMessage` with `INTERRUPT_CANCEL_MESSAGE` as its content. On the next LLM turn, this middleware detects that the last message is a cancelled tool message and short-circuits the agent — it jumps directly to the `"end"` node with a cancellation reply, preventing any further LLM calls or tool executions.
 
 This relay pattern allows human-in-the-loop confirmations to originate deep inside a child agent while the client interacts exclusively with the supervisor's interrupt surface.
+
+---
+
+## RBAC — Role-Based Access Control for Agents
+
+Agent availability is gated by the requesting user's **Rancher Global Permissions**, so administrators can scope which agents each user can access without introducing a new permission model.
+
+### Model
+
+Each `AIAgentConfig` may declare `spec.requiredPermissions` — a list of Rancher global role names (e.g. `admin`, `restricted-admin`, `user`, or custom roles). A user may access an agent when:
+
+- the user holds the `admin` Global Permission (**bypass** — access to all agents), **or**
+- the agent has **no** `requiredPermissions` (**unrestricted** — available to all authenticated users), **or**
+- the user holds **at least one** of the agent's `requiredPermissions` (**OR logic**).
+
+### Enforcement (single server-side point)
+
+Filtering happens in `factory.build_agent()` (`_filter_agents_for_user`) — the one place every session is built. Because the supervisor is constructed only from accessible agents:
+
+- **UI list** (`build_chat_metadata`) only ever contains accessible agents — the client never receives restricted definitions and does no client-side filtering.
+- **Prompt routing** can only route to accessible agents; the supervisor prompt instructs Liz to decline gracefully (without naming restricted agents) when a needed capability isn't available.
+- **Direct agent invocation** by name cannot reach a restricted agent (it isn't in the built roster).
+
+It **fails closed**: if identity or permissions can't be resolved, `NoAgentAvailableError` is raised and no agents are returned.
+
+### Permission resolution — `app/services/rbac.py`
+
+RBAC lives in its own module (sibling of `auth.py`); `loader.py` stays focused on AIAgentConfig CRD loading. A user's global permissions are the set of `globalRoleName` values on `GlobalRoleBinding` objects (`management.cattle.io/v3`) whose `userName` matches the user, read through the Kubernetes API using the agent service account (so resolution doesn't depend on the user's own RBAC). The whole feature can be disabled with `RBAC_ENABLED=false`.
+
+`loader.load_agent_configs()` stays a pure, unfiltered loader (used by OAuth lookups that need the full roster). `rbac.load_agent_configs_for_user(user_id)` is the filtered entry point: it loads via the loader, resolves the user's permissions, and returns only accessible agents — raising `PermissionsError` (fail closed) if they can't be resolved.
+
+> Permissions are resolved fresh on each call (no caching for now).
+
+### UI agent list — `app/routers/agent.py`
+
+- `GET /v1/api/agents/available` — user-scoped; returns the RBAC-filtered agents (`name`, `displayName`, `description`, `status`) the caller may access via `rbac.load_agent_configs_for_user`. This is the single source of truth for the UI's agent selector, so the UI never lists `AIAgentConfig` CRDs directly. Fails closed (503) if permissions can't be resolved.
+
+### Configuring per-agent access
+
+Administrators set an agent's `spec.requiredPermissions` directly on the `AIAgentConfig` CRD (the durable, auditable source of truth) through Rancher's native resource editor — no dedicated backend endpoints are needed. Changes take effect on the next agent-list fetch (no restart).
+
+### Resolved PRD open questions
+
+| Question | Resolution |
+|---|---|
+| Cache user permissions? How long? | Yes — in-memory, short TTL via `RBAC_PERMISSIONS_CACHE_TTL` (default 30s). |
+| Endpoint to resolve global permissions? | `GlobalRoleBinding` resources in `management.cattle.io/v3`, read via the Kubernetes API by the agent service account. |
+| Default for agents with no permissions? | Unrestricted (all authenticated users) — preserves upgrade behavior. |
+| Agent groups sharing a permission set? | Individual per-agent configuration for this release; grouping is future work. |
+| Routing with partial availability? | Supervisor is built only with accessible agents, so it naturally routes to the best accessible one and declines otherwise. |

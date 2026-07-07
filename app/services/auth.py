@@ -4,7 +4,7 @@ import httpx
 import os
 import urllib3
 from urllib.parse import urlparse
-from fastapi import Request
+from fastapi import Request, WebSocket
 from typing import cast
 from kubernetes import client, config
 
@@ -161,5 +161,16 @@ async def get_user_id_from_request(request: Request) -> str | None:
     if not token:
         logging.warning("R_SESS cookie not found")
         return None
+
+    return await get_user_id(rancher_url, token)
+
+
+async def get_user_id_from_websocket(websocket: WebSocket) -> str | None:
+    """
+    Retrieves the user ID from the Rancher API using the session token from the
+    WebSocket cookies, falling back to the RANCHER_API_TOKEN env var (local dev).
+    """
+    rancher_url = os.environ.get("RANCHER_URL", "https://rancher.cattle-system")
+    token = os.environ.get("RANCHER_API_TOKEN", websocket.cookies.get("R_SESS", ""))
 
     return await get_user_id(rancher_url, token)

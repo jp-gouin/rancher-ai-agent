@@ -18,6 +18,17 @@ from app.services.agent.factory import (
 from app.services.agent.loader import AuthenticationType
 
 
+@pytest.fixture(autouse=True)
+def _disable_rbac():
+    """Disable RBAC filtering for core build_agent tests.
+
+    RBAC behavior is covered separately in test_factory_rbac.py; these tests
+    focus on agent construction and MCP wiring.
+    """
+    with patch('app.services.agent.factory.rbac_enabled', return_value=False):
+        yield
+
+
 # ============================================================================
 # build_agent Tests
 # ============================================================================

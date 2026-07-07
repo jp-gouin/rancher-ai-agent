@@ -5,8 +5,23 @@ from datetime import datetime, timezone
 
 import httpx
 from kubernetes import client
-from .loader import AuthenticationType, load_agent_configs, AgentConfig, get_basic_auth_credentials, get_header_auth_headers, get_ca_cert_from_secret, _load_k8s_config
+from .loader import (
+    AuthenticationType,
+    load_agent_configs,
+    AgentConfig,
+    get_basic_auth_credentials,
+    get_header_auth_headers,
+    get_ca_cert_from_secret,
+    _load_k8s_config,
+)
+from ..rbac import (
+    PermissionsError,
+    filter_agent_configs,
+    get_global_permissions,
+    rbac_enabled,
+)
 from ..oauth2 import get_oauth_cookie_names
+from ..auth import get_user_id_from_websocket
 from .supervisor import create_supervisor_agent, ChildAgent, SupervisorGraph
 from .child import create_child_agent
 from ._constants import NoAgentAvailableError, NeedsOauth2
@@ -36,13 +51,15 @@ async def build_agent(llm: BaseLanguageModel, websocket: WebSocket) -> tuple[Com
         NoAgentAvailableError: If no agent configurations exist or all MCP connections fail.
     """
     checkpointer = websocket.app.memory_manager.get_checkpointer()
-    agent_configs = load_agent_configs()
+    all_agent_configs = load_agent_configs()
 
-    if not agent_configs:
+    if not all_agent_configs:
         logging.error("Failed to load any agent configurations from CRDs")
         raise NoAgentAvailableError("No agent configurations available.")
 
-    logging.info(f"Loaded {len(agent_configs)} agent configuration(s)")
+    logging.info(f"Loaded {len(all_agent_configs)} agent configuration(s)")
+
+    agent_configs = await _filter_agents_for_user(all_agent_configs, websocket)
 
     if len(agent_configs) == 1:
         agent_cfg = agent_configs[0]
@@ -351,3 +368,51 @@ def _make_insecure_http_client(
 ) -> httpx.AsyncClient:
     """httpx_client_factory that disables TLS certificate verification."""
     return httpx.AsyncClient(headers=headers or {}, timeout=timeout, auth=auth, verify=False)
+
+
+async def _filter_agents_for_user(
+    agent_configs: list[AgentConfig],
+    websocket: WebSocket,
+) -> list[AgentConfig]:
+    """
+    Filter agent configs to those the requesting user is permitted to access.
+
+    Resolves the user's Rancher Global Permissions and keeps only agents the
+    user can access (see ``permissions.can_access_agent``). Administrators
+    receive the full list.
+
+    Fails closed: if RBAC is enabled and the user's permissions cannot be
+    resolved, a ``NoAgentAvailableError`` is raised so no agents are exposed.
+    """
+    if not rbac_enabled():
+        return agent_configs
+
+    user_id = await get_user_id_from_websocket(websocket)
+    if not user_id:
+        raise NoAgentAvailableError(
+            "Unable to determine your identity from the Rancher session. "
+            "Please sign in to Rancher again and retry."
+        )
+
+    try:
+        permissions = get_global_permissions(user_id)
+    except PermissionsError as e:
+        logging.error(f"RBAC permission resolution failed for user '{user_id}': {e}")
+        raise NoAgentAvailableError(
+            "Unable to verify your permissions with Rancher right now. "
+            "Please try again shortly or contact your administrator."
+        ) from e
+
+    filtered = filter_agent_configs(agent_configs, permissions)
+    logging.info(
+        "RBAC: user '%s' can access %d of %d agent(s)",
+        user_id, len(filtered), len(agent_configs),
+    )
+
+    if not filtered:
+        raise NoAgentAvailableError(
+            "No AI agents are available for your role. "
+            "If you believe this is an error, contact your administrator."
+        )
+
+    return filtered
