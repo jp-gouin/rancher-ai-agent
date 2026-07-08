@@ -1,8 +1,6 @@
 import logging
 from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import JSONResponse
-from ..services.auth import get_user_id_from_request
-from ..services.rbac import load_agent_configs_for_user
 
 router = APIRouter(prefix="/v1/api", tags=["agent"])
 
@@ -51,31 +49,3 @@ async def readiness(request: Request):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             content={"detail": str(e)}
         )
-@router.get("/agents/available")
-async def list_available_agents(request: Request):
-    """
-    Return the agents the current user is permitted to access.
-
-    Returns objects shaped for the UI ``Agent`` type
-    (``name``, ``displayName``, ``description``, ``status``). Live health/OAuth
-    status continues to arrive as an overlay via the WebSocket ``chat-metadata``.
-
-    Filtered server-side by Rancher/Kubernetes authorization; agents whose access
-    cannot be confirmed are omitted (fail closed).
-    """
-    user_id = await get_user_id_from_request(request)
-    if not user_id:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized")
-
-    configs = load_agent_configs_for_user(user_id)
-
-    agents = [
-        {
-            "name": c.name,
-            "displayName": c.displayName or c.name,
-            "description": c.description,
-            "status": "ready" if c.ready else "error",
-        }
-        for c in configs
-    ]
-    return JSONResponse(status_code=status.HTTP_200_OK, content=agents)
