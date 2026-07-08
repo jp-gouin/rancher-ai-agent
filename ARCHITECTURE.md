@@ -79,17 +79,7 @@ Agent availability is gated by native **Rancher/Kubernetes authorization**, so a
 
 ### Model
 
-An agent is visible to a user **iff that user is allowed to `get` the corresponding `AIAgentConfig` resource**. The decision is delegated to Kubernetes via a `SubjectAccessReview` (run with the agent service account, which has `create subjectaccessreviews`). Consequences:
+An agent is visible to a user **if that user is allowed to `get` the corresponding `AIAgentConfig` resource**. The decision is delegated to Kubernetes via a `SubjectAccessReview` (run with the agent service account, which has `create subjectaccessreviews`). Consequences:
 
-- Cluster admins can `get` everything → they see all agents (no special-casing).
+- Cluster admins can `get` everything → they see all agents by default.
 - Access is granted by binding users to GlobalRoles whose `aiagentconfigs` rule uses `resourceNames` to name the allowed agents. The bundled `liz-user` role grants `get` on the default agents (`rancher`, `fleet`, `provisioning`); scope additional/restricted agents with extra GlobalRoles.
-- **Gotcha:** Kubernetes RBAC `resourceNames` constrains `get` but **not** `list`/`watch`, so filtering must happen server-side one agent at a time — which is exactly what `rbac.filter_agent_configs` does. The UI must not list CRDs directly.
-
-### Where it lives
-
-- `rbac.py` (sibling of `auth.py`) — `user_can_access_agent(user_id, name)` runs the SAR; `filter_agent_configs(user_id, configs)` and `load_agent_configs_for_user(user_id)` apply it. Fails closed (an agent whose decision can't be resolved is omitted). `RBAC_ENABLED=false` disables filtering entirely.
-- `agent/loader.py` — AIAgentConfig CRD loading only.
-- `agent/factory.py::build_agent` — filters the roster before building the supervisor, so UI metadata, prompt routing, and direct agent invocation are all scoped. Raises `NoAgentAvailableError` (surfaced to the client) if the user has no identity or no accessible agents.
-- `routers/agent.py` — `GET /v1/api/agents/available` returns the filtered roster for the UI selector.
-
-There is no dedicated admin API: access is configured with standard Rancher GlobalRoles.

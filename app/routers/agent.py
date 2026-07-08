@@ -1,5 +1,5 @@
 import logging
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, Request, status
 from fastapi.responses import JSONResponse
 
 router = APIRouter(prefix="/v1/api", tags=["agent"])
