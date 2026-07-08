@@ -1,5 +1,16 @@
 """
-RBAC — filter AI agents by the requesting user's Rancher Global Permissions.
+RBAC — filter AI agents using native Rancher/Kubernetes authorization.
+
+Rather than re-implementing role matching, access is delegated to
+Kubernetes authorization via a ``SubjectAccessReview``: an agent is visible to a
+user iff that user is allowed to ``get`` the corresponding ``AIAgentConfig``
+resource. Access is therefore configured with ordinary Rancher GlobalRole rules
+scoped by ``resourceNames`` — no custom permission model, no admin-bypass logic
+(cluster admins are allowed to get everything and naturally see all agents).
+
+Note: Kubernetes RBAC ``resourceNames`` constrains ``get`` (not ``list``/
+``watch``), so filtering must happen server-side, one agent at a time — which is
+exactly what the ``/agents/available`` endpoint and ``build_agent`` do.
 """
 
 import logging
@@ -8,24 +19,13 @@ import os
 from kubernetes import client
 from kubernetes.client.rest import ApiException
 
-from .agent.loader import AgentConfig, load_agent_configs, _load_k8s_config
+from .agent.loader import AgentConfig, load_agent_configs, _load_k8s_config, NAMESPACE, CRD_GROUP
 
-# Global role that grants full admin access; bypasses all per-agent restrictions.
-ADMIN_GLOBAL_ROLE = "admin"
-
-# Rancher management API used to resolve global permissions.
-MGMT_GROUP = "management.cattle.io"
-MGMT_VERSION = "v3"
-GLOBAL_ROLE_BINDINGS_PLURAL = "globalrolebindings"
+AGENT_RESOURCE = "aiagentconfigs"
 
 # Feature flag. When disabled, filtering is skipped and every authenticated user
 # receives the full agent list (legacy behavior). Evaluated once at import time.
 RBAC_ENABLED = os.environ.get("RBAC_ENABLED", "true").lower() == "true"
-
-
-class PermissionsError(Exception):
-    """Raised when a user's Global Permissions cannot be resolved."""
-    pass
 
 
 def rbac_enabled() -> bool:
@@ -33,104 +33,64 @@ def rbac_enabled() -> bool:
     return RBAC_ENABLED
 
 
-def _list_global_role_bindings() -> list[dict]:
-    """List all GlobalRoleBinding objects via the Kubernetes API."""
-    _load_k8s_config()
-    api = client.CustomObjectsApi()
-    response = api.list_cluster_custom_object(
-        group=MGMT_GROUP,
-        version=MGMT_VERSION,
-        plural=GLOBAL_ROLE_BINDINGS_PLURAL,
-    )
-    return response.get("items", [])
-
-
-def get_global_permissions(user_id: str) -> set[str]:
+def user_can_access_agent(user_id: str, agent_name: str) -> bool:
     """
-    Resolve the set of Global Permission names held by a user.
+    Return True if *user_id* is allowed to ``get`` the named ``AIAgentConfig``.
 
-    Args:
-        user_id: The Rancher user id (e.g. ``u-abcde``) as returned by the
-            Rancher users API.
-
-    Returns:
-        The set of ``globalRoleName`` values bound to the user.
-
-    Raises:
-        PermissionsError: If the bindings cannot be listed (fail closed).
+    The decision is delegated to Rancher/Kubernetes authorization through a
+    SubjectAccessReview (run with the agent service account). Fails closed:
+    any error resolving the decision yields ``False``.
     """
     if not user_id:
-        raise PermissionsError("Cannot resolve permissions for an empty user id")
+        return False
 
     try:
-        bindings = _list_global_role_bindings()
+        _load_k8s_config()
+        auth_api = client.AuthorizationV1Api()
+        sar = client.V1SubjectAccessReview(
+            spec=client.V1SubjectAccessReviewSpec(
+                user=user_id,
+                resource_attributes=client.V1ResourceAttributes(
+                    verb="get",
+                    group=CRD_GROUP,
+                    resource=AGENT_RESOURCE,
+                    name=agent_name,
+                    namespace=NAMESPACE,
+                ),
+            )
+        )
+        allowed = bool(auth_api.create_subject_access_review(sar).status.allowed)
+        logging.debug(
+            "SAR: user '%s' get %s/%s -> %s", user_id, AGENT_RESOURCE, agent_name, allowed
+        )
+        return allowed
     except ApiException as e:
-        raise PermissionsError(
-            f"Failed to list GlobalRoleBindings from the Rancher API: {e}"
-        ) from e
+        logging.error("SubjectAccessReview failed for user '%s', agent '%s': %s", user_id, agent_name, e)
+        return False
     except Exception as e:
-        raise PermissionsError(
-            f"Failed to resolve global permissions for user '{user_id}': {e}"
-        ) from e
-
-    perms = {
-        binding.get("globalRoleName")
-        for binding in bindings
-        if binding.get("userName") == user_id and binding.get("globalRoleName")
-    }
-
-    logging.debug("Resolved %d global permission(s) for user '%s'", len(perms), user_id)
-    return perms
+        logging.error("SubjectAccessReview error for user '%s', agent '%s': %s", user_id, agent_name, e)
+        return False
 
 
-def is_admin(permissions: set[str]) -> bool:
-    """Return True if the permission set includes the Administrator role."""
-    return ADMIN_GLOBAL_ROLE in permissions
-
-
-def can_access_agent(agent_config: AgentConfig, permissions: set[str]) -> bool:
-    """
-    Determine whether a user with *permissions* can access *agent_config*.
-
-    Access is granted when any of the following holds:
-    * the user is an Administrator (bypass);
-    * the agent has no ``required_permissions`` (unrestricted); or
-    * the user holds at least one of the agent's required permissions (OR logic).
-    """
-    if is_admin(permissions):
-        return True
-    required = agent_config.required_permissions
-    if not required:
-        return True
-    return bool(set(required) & permissions)
-
-
-def filter_agent_configs(
-    agent_configs: list[AgentConfig],
-    permissions: set[str],
-) -> list[AgentConfig]:
-    """Return only the agent configs accessible to a user with *permissions*."""
-    return [cfg for cfg in agent_configs if can_access_agent(cfg, permissions)]
+def filter_agent_configs(user_id: str, agent_configs: list[AgentConfig]) -> list[AgentConfig]:
+    """Return only the agents *user_id* is allowed to access (via SubjectAccessReview)."""
+    return [cfg for cfg in agent_configs if user_can_access_agent(user_id, cfg.name)]
 
 
 def load_agent_configs_for_user(user_id: str) -> list[AgentConfig]:
     """
-    Load enabled agent configs filtered by the user's Rancher Global Permissions.
+    Load enabled agent configs filtered to those *user_id* may access.
 
     When RBAC is disabled, returns all enabled configs unchanged. Otherwise
-    resolves the user's global permissions and keeps only the agents they may
-    access (Administrators receive the full list).
-
-    Raises:
-        PermissionsError: If RBAC is enabled and permissions cannot be resolved
-            (fail closed — callers should surface an error and expose no agents).
+    keeps only the agents the user is authorized to ``get`` (cluster admins see
+    all). Fails closed per agent: an agent is excluded if its access decision
+    cannot be resolved.
     """
     configs = load_agent_configs()
     if not rbac_enabled():
         return configs
 
-    permissions = get_global_permissions(user_id)
-    filtered = filter_agent_configs(configs, permissions)
+    filtered = filter_agent_configs(user_id, configs)
     logging.info(
         "RBAC: user '%s' can access %d of %d agent(s)",
         user_id, len(filtered), len(configs),

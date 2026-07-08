@@ -1,139 +1,85 @@
 """
-Unit tests for the RBAC helpers in app/services/rbac.py.
-
-Covers Global Permission resolution, admin bypass, OR-logic agent filtering,
-and the user-scoped ``load_agent_configs_for_user`` entry point.
+Unit tests for RBAC agent filtering (SubjectAccessReview-based) in app/services/rbac.py.
 """
-import pytest
 from unittest.mock import MagicMock, patch
 
 from app.services.rbac import (
-    ADMIN_GLOBAL_ROLE,
-    PermissionsError,
-    can_access_agent,
+    user_can_access_agent,
     filter_agent_configs,
-    get_global_permissions,
-    is_admin,
     load_agent_configs_for_user,
-    AgentConfig,
 )
+from app.services.agent.loader import AgentConfig
 
 
-def _agent(name: str, required: list[str] | None = None) -> AgentConfig:
+def _agent(name: str) -> AgentConfig:
     return AgentConfig(
         name=name,
         displayName=name,
         description="",
         system_prompt="",
         mcp_url="",
-        required_permissions=required or [],
     )
 
 
-# ---------------------------------------------------------------------------
-# is_admin / can_access_agent / filter_agent_configs
-# ---------------------------------------------------------------------------
+def _sar_api(allowed_names: set[str]):
+    """A mocked AuthorizationV1Api whose SAR allows only *allowed_names*.
 
-def test_is_admin_true():
-    assert is_admin({ADMIN_GLOBAL_ROLE, "user"}) is True
+    Real V1SubjectAccessReview/V1ResourceAttributes objects are built by the code
+    under test, so ``sar.spec.resource_attributes.name`` reflects the real name.
+    """
+    def _create_sar(sar):
+        name = sar.spec.resource_attributes.name
+        resp = MagicMock()
+        resp.status.allowed = name in allowed_names
+        return resp
 
-
-def test_is_admin_false():
-    assert is_admin({"user", "restricted-admin"}) is False
-
-
-def test_admin_bypasses_all_restrictions():
-    agent = _agent("security", required=["security-role"])
-    assert can_access_agent(agent, {ADMIN_GLOBAL_ROLE}) is True
-
-
-def test_unrestricted_agent_accessible_to_everyone():
-    agent = _agent("rancher", required=[])
-    assert can_access_agent(agent, set()) is True
-    assert can_access_agent(agent, {"user"}) is True
+    api = MagicMock()
+    api.create_subject_access_review.side_effect = _create_sar
+    return api
 
 
-def test_or_logic_grants_access_with_any_matching_permission():
-    agent = _agent("ops", required=["cluster-owner", "restricted-admin"])
-    assert can_access_agent(agent, {"restricted-admin"}) is True
-
-
-def test_restricted_agent_denied_without_matching_permission():
-    agent = _agent("security", required=["security-role"])
-    assert can_access_agent(agent, {"user"}) is False
-
-
-def test_filter_agent_configs_non_admin():
-    agents = [
-        _agent("rancher", required=[]),
-        _agent("security", required=["security-role"]),
-        _agent("ops", required=["cluster-owner", "user"]),
-    ]
-    result = filter_agent_configs(agents, {"user"})
-    assert {a.name for a in result} == {"rancher", "ops"}
-
-
-def test_filter_agent_configs_admin_gets_all():
-    agents = [_agent("rancher", required=[]), _agent("security", required=["security-role"])]
-    result = filter_agent_configs(agents, {ADMIN_GLOBAL_ROLE})
-    assert len(result) == 2
-
-
-def test_filter_agent_configs_no_permissions_only_unrestricted():
-    agents = [_agent("rancher", required=[]), _agent("security", required=["security-role"])]
-    result = filter_agent_configs(agents, set())
-    assert [a.name for a in result] == ["rancher"]
+def _patch_sar(allowed_names: set[str]):
+    return patch("app.services.rbac.client.AuthorizationV1Api", return_value=_sar_api(allowed_names))
 
 
 # ---------------------------------------------------------------------------
-# get_global_permissions
+# user_can_access_agent
 # ---------------------------------------------------------------------------
 
-def _binding(user: str, role: str) -> dict:
-    return {"userName": user, "globalRoleName": role}
+@patch("app.services.rbac._load_k8s_config")
+def test_user_can_access_agent_allowed(_cfg):
+    with _patch_sar({"rancher"}):
+        assert user_can_access_agent("u-bob", "rancher") is True
 
 
 @patch("app.services.rbac._load_k8s_config")
-@patch("app.services.rbac.client")
-def test_get_global_permissions_resolves_user_roles(mock_client, _mock_cfg):
-    api = MagicMock()
-    mock_client.CustomObjectsApi.return_value = api
-    api.list_cluster_custom_object.return_value = {
-        "items": [
-            _binding("u-alice", "admin"),
-            _binding("u-alice", "user"),
-            _binding("u-bob", "user"),
-            {"userName": "u-alice"},  # missing globalRoleName -> ignored
-        ]
-    }
+def test_user_can_access_agent_denied(_cfg):
+    with _patch_sar({"rancher"}):
+        assert user_can_access_agent("u-bob", "security") is False
 
-    assert get_global_permissions("u-alice") == {"admin", "user"}
+
+def test_user_can_access_agent_empty_user_id():
+    assert user_can_access_agent("", "rancher") is False
 
 
 @patch("app.services.rbac._load_k8s_config")
-@patch("app.services.rbac.client")
-def test_get_global_permissions_empty_for_unbound_user(mock_client, _mock_cfg):
-    api = MagicMock()
-    mock_client.CustomObjectsApi.return_value = api
-    api.list_cluster_custom_object.return_value = {"items": [_binding("u-bob", "user")]}
-
-    assert get_global_permissions("u-alice") == set()
+def test_user_can_access_agent_fails_closed_on_error(_cfg):
+    mock_client = MagicMock()
+    mock_client.AuthorizationV1Api.return_value.create_subject_access_review.side_effect = Exception("boom")
+    with patch("app.services.rbac.client", mock_client):
+        assert user_can_access_agent("u-bob", "rancher") is False
 
 
-def test_get_global_permissions_empty_user_id_raises():
-    with pytest.raises(PermissionsError):
-        get_global_permissions("")
-
+# ---------------------------------------------------------------------------
+# filter_agent_configs
+# ---------------------------------------------------------------------------
 
 @patch("app.services.rbac._load_k8s_config")
-@patch("app.services.rbac.client")
-def test_get_global_permissions_fails_closed_on_api_error(mock_client, _mock_cfg):
-    api = MagicMock()
-    mock_client.CustomObjectsApi.return_value = api
-    api.list_cluster_custom_object.side_effect = Exception("boom")
-
-    with pytest.raises(PermissionsError):
-        get_global_permissions("u-alice")
+def test_filter_agent_configs_keeps_allowed(_cfg):
+    agents = [_agent("rancher"), _agent("security"), _agent("fleet")]
+    with _patch_sar({"rancher", "fleet"}):
+        result = filter_agent_configs("u-bob", agents)
+    assert {a.name for a in result} == {"rancher", "fleet"}
 
 
 # ---------------------------------------------------------------------------
@@ -141,42 +87,29 @@ def test_get_global_permissions_fails_closed_on_api_error(mock_client, _mock_cfg
 # ---------------------------------------------------------------------------
 
 @patch("app.services.rbac.load_agent_configs")
-def test_load_for_user_filters_by_permission(mock_load):
-    mock_load.return_value = [_agent("rancher"), _agent("security", ["security-role"])]
-
+def test_load_for_user_filters(mock_load):
+    mock_load.return_value = [_agent("rancher"), _agent("security")]
     with patch("app.services.rbac.rbac_enabled", return_value=True), \
-         patch("app.services.rbac.get_global_permissions", return_value={"user"}):
+         patch("app.services.rbac._load_k8s_config"), \
+         _patch_sar({"rancher"}):
         result = load_agent_configs_for_user("u-bob")
-
     assert [a.name for a in result] == ["rancher"]
 
 
 @patch("app.services.rbac.load_agent_configs")
-def test_load_for_user_admin_gets_all(mock_load):
-    mock_load.return_value = [_agent("rancher"), _agent("security", ["security-role"])]
-
-    with patch("app.services.rbac.rbac_enabled", return_value=True), \
-         patch("app.services.rbac.get_global_permissions", return_value={"admin"}):
-        result = load_agent_configs_for_user("u-admin")
-
-    assert {a.name for a in result} == {"rancher", "security"}
-
-
-@patch("app.services.rbac.load_agent_configs")
 def test_load_for_user_rbac_disabled_returns_all(mock_load):
-    mock_load.return_value = [_agent("rancher"), _agent("security", ["security-role"])]
-
+    mock_load.return_value = [_agent("rancher"), _agent("security")]
     with patch("app.services.rbac.rbac_enabled", return_value=False):
         result = load_agent_configs_for_user("u-bob")
-
     assert {a.name for a in result} == {"rancher", "security"}
 
 
 @patch("app.services.rbac.load_agent_configs")
-def test_load_for_user_fails_closed(mock_load):
-    mock_load.return_value = [_agent("rancher")]
-
+def test_load_for_user_no_access_returns_empty(mock_load):
+    """When the user can access nothing, an empty list is returned (caller fails closed)."""
+    mock_load.return_value = [_agent("security")]
     with patch("app.services.rbac.rbac_enabled", return_value=True), \
-         patch("app.services.rbac.get_global_permissions", side_effect=PermissionsError("down")):
-        with pytest.raises(PermissionsError):
-            load_agent_configs_for_user("u-bob")
+         patch("app.services.rbac._load_k8s_config"), \
+         _patch_sar(set()):
+        result = load_agent_configs_for_user("u-bob")
+    assert result == []

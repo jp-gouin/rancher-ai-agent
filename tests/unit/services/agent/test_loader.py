@@ -11,7 +11,6 @@ from kubernetes.client.rest import ApiException
 from app.services.agent.loader import (
     _get_default_ai_agent_config_crds,
     _update_default_ai_agent_config_crds,
-    _crd_to_agent_config,
     NAMESPACE,
 )
 
@@ -290,35 +289,6 @@ def test_update_detects_drift_in_human_validation_tools():
     # Only rancher should be patched
     mock_api.patch_namespaced_custom_object.assert_called_once()
     assert mock_api.patch_namespaced_custom_object.call_args.kwargs["name"] == "rancher"
-
-
-def test_crd_to_agent_config_maps_required_permissions():
-    """Verify requiredPermissions from the CRD spec maps to required_permissions."""
-    crd = {
-        "metadata": {"name": "security"},
-        "spec": {
-            "displayName": "Security",
-            "requiredPermissions": ["admin", "security-role"],
-        },
-        "status": {"phase": "Ready"},
-    }
-
-    cfg = _crd_to_agent_config(crd)
-
-    assert cfg.required_permissions == ["admin", "security-role"]
-
-
-def test_crd_to_agent_config_defaults_required_permissions_empty():
-    """Verify an agent with no requiredPermissions defaults to unrestricted."""
-    crd = {
-        "metadata": {"name": "rancher"},
-        "spec": {"displayName": "Rancher"},
-        "status": {"phase": "Ready"},
-    }
-
-    cfg = _crd_to_agent_config(crd)
-
-    assert cfg.required_permissions == []
 
 
 def test_update_detects_drift_in_system_prompt():

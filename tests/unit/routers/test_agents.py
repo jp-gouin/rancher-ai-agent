@@ -10,7 +10,6 @@ from fastapi import HTTPException, status
 
 from app.routers import agent as agent_router
 from app.services.agent.loader import AgentConfig
-from app.services.rbac import PermissionsError
 
 
 def _cfg(name, ready=True):
@@ -57,13 +56,14 @@ async def test_available_agents_maps_ui_shape(mock_request):
 
 
 @pytest.mark.asyncio
-async def test_available_agents_fails_closed(mock_request):
-    """A PermissionsError from the loader surfaces as 503."""
+async def test_available_agents_empty_when_no_access(mock_request):
+    """A user authorized for no agents receives an empty list."""
     with patch("app.routers.agent.get_user_id_from_request", AsyncMock(return_value="u-bob")), \
-         patch("app.routers.agent.load_agent_configs_for_user", side_effect=PermissionsError("down")):
+         patch("app.routers.agent.load_agent_configs_for_user", return_value=[]):
         resp = await agent_router.list_available_agents(mock_request)
 
-    assert resp.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
+    assert resp.status_code == status.HTTP_200_OK
+    assert json.loads(resp.body) == []
 
 
 @pytest.mark.asyncio

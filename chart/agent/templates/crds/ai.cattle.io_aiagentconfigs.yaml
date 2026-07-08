@@ -101,17 +101,6 @@ spec:
               mcpURL:
                 description: MCPURL is the Model Context Protocol server URL
                 type: string
-              requiredPermissions:
-                description: |-
-                  RequiredPermissions lists the Rancher Global Permissions (global role
-                  names, e.g. "admin", "restricted-admin", "user") that grant access to
-                  this agent. A user is granted access if they hold AT LEAST ONE of the
-                  listed permissions (OR logic). An empty or omitted list means the agent
-                  is unrestricted and available to all authenticated users. Users holding
-                  the "admin" Global Permission always bypass this check.
-                items:
-                  type: string
-                type: array
               systemPrompt:
                 description: SystemPrompt is the initial system-level instructions
                   for the agent

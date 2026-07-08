@@ -175,7 +175,6 @@ class AgentConfig(BaseModel):
     ca_bundle_ref: Optional[CABundleRef] = None
     toolset: Optional[str] = None
     human_validation_tools: list[str] = []
-    required_permissions: list[str] = []
     ready: bool = False
 
 
@@ -321,7 +320,6 @@ def _crd_to_agent_config(crd_obj: dict) -> AgentConfig:
         ca_bundle_ref=CABundleRef(**spec["caBundleRef"]) if spec.get("caBundleRef") else None,
         toolset=spec.get("toolSet", None),
         human_validation_tools=human_validation_tools,
-        required_permissions=list(spec.get("requiredPermissions", []) or []),
         ready=status.get("phase", "Failed") == "Ready"
     )
 

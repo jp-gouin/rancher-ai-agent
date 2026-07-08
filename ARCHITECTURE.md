@@ -75,12 +75,21 @@ This relay pattern allows human-in-the-loop confirmations to originate deep insi
 
 ## RBAC — Role-Based Access Control for Agents
 
-Agent availability is gated by the requesting user's **Rancher Global Permissions**, so administrators can scope which agents each user can access without introducing a new permission model.
+Agent availability is gated by native **Rancher/Kubernetes authorization**, so administrators scope agent access with ordinary GlobalRole rules — no custom permission model in Liz.
 
 ### Model
 
-Each `AIAgentConfig` may declare `spec.requiredPermissions` — a list of Rancher global role names (e.g. `admin`, `restricted-admin`, `user`, or custom roles). A user may access an agent when:
+An agent is visible to a user **iff that user is allowed to `get` the corresponding `AIAgentConfig` resource**. The decision is delegated to Kubernetes via a `SubjectAccessReview` (run with the agent service account, which has `create subjectaccessreviews`). Consequences:
 
-- the user holds the `admin` Global Permission (**bypass** — access to all agents), **or**
-- the agent has **no** `requiredPermissions` (**unrestricted** — available to all authenticated users), **or**
-- the user holds **at least one** of the agent's `requiredPermissions` (**OR logic**).
+- Cluster admins can `get` everything → they see all agents (no special-casing).
+- Access is granted by binding users to GlobalRoles whose `aiagentconfigs` rule uses `resourceNames` to name the allowed agents. The bundled `liz-user` role grants `get` on the default agents (`rancher`, `fleet`, `provisioning`); scope additional/restricted agents with extra GlobalRoles.
+- **Gotcha:** Kubernetes RBAC `resourceNames` constrains `get` but **not** `list`/`watch`, so filtering must happen server-side one agent at a time — which is exactly what `rbac.filter_agent_configs` does. The UI must not list CRDs directly.
+
+### Where it lives
+
+- `rbac.py` (sibling of `auth.py`) — `user_can_access_agent(user_id, name)` runs the SAR; `filter_agent_configs(user_id, configs)` and `load_agent_configs_for_user(user_id)` apply it. Fails closed (an agent whose decision can't be resolved is omitted). `RBAC_ENABLED=false` disables filtering entirely.
+- `agent/loader.py` — AIAgentConfig CRD loading only.
+- `agent/factory.py::build_agent` — filters the roster before building the supervisor, so UI metadata, prompt routing, and direct agent invocation are all scoped. Raises `NoAgentAvailableError` (surfaced to the client) if the user has no identity or no accessible agents.
+- `routers/agent.py` — `GET /v1/api/agents/available` returns the filtered roster for the UI selector.
+
+There is no dedicated admin API: access is configured with standard Rancher GlobalRoles.

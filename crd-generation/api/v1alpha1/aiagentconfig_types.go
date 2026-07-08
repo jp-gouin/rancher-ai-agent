@@ -44,15 +44,6 @@ type AIAgentConfigSpec struct {
 	// +optional
 	HumanValidationTools []string `json:"humanValidationTools,omitempty"`
 
-	// RequiredPermissions lists the Rancher Global Permissions (global role
-	// names, e.g. "admin", "restricted-admin", "user") that grant access to
-	// this agent. A user is granted access if they hold AT LEAST ONE of the
-	// listed permissions (OR logic). An empty or omitted list means the agent
-	// is unrestricted and available to all authenticated users. Users holding
-	// the "admin" Global Permission always bypass this check.
-	// +optional
-	RequiredPermissions []string `json:"requiredPermissions,omitempty"`
-
 	// ToolSet specifies a predefined set of tools for the agent
 	// +optional
 	ToolSet string `json:"toolSet,omitempty"`

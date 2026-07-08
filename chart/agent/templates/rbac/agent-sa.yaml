@@ -9,13 +9,10 @@ kind: ClusterRole
 metadata:
   name: agent-subjectaccessreview-role
 rules:
+# Used for agent RBAC: check whether a user may `get` a given AIAgentConfig.
 - apiGroups: ["authorization.k8s.io"]
   resources: ["subjectaccessreviews"]
   verbs: ["create"]
-# Resolve a user's Rancher Global Permissions for AI agent RBAC filtering.
-- apiGroups: ["management.cattle.io"]
-  resources: ["globalrolebindings"]
-  verbs: ["get", "list"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole

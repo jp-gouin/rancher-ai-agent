@@ -14,12 +14,7 @@ from .loader import (
     get_ca_cert_from_secret,
     _load_k8s_config,
 )
-from ..rbac import (
-    PermissionsError,
-    filter_agent_configs,
-    get_global_permissions,
-    rbac_enabled,
-)
+from ..rbac import filter_agent_configs, rbac_enabled
 from ..oauth2 import get_oauth_cookie_names
 from ..auth import get_user_id_from_websocket
 from .supervisor import create_supervisor_agent, ChildAgent, SupervisorGraph
@@ -375,14 +370,12 @@ async def _filter_agents_for_user(
     websocket: WebSocket,
 ) -> list[AgentConfig]:
     """
-    Filter agent configs to those the requesting user is permitted to access.
+    Keeps only the agents the requesting user is authorized to access, as
+    decided by Rancher/Kubernetes authorization (see ``rbac.filter_agent_configs``).
+    Cluster admins are allowed to get everything and receive the full list.
 
-    Resolves the user's Rancher Global Permissions and keeps only agents the
-    user can access (see ``permissions.can_access_agent``). Administrators
-    receive the full list.
-
-    Fails closed: if RBAC is enabled and the user's permissions cannot be
-    resolved, a ``NoAgentAvailableError`` is raised so no agents are exposed.
+    Fails closed: if the user's identity cannot be resolved, or they have access
+    to no agents, a ``NoAgentAvailableError`` is raised so nothing is exposed.
     """
     if not rbac_enabled():
         return agent_configs
@@ -394,16 +387,7 @@ async def _filter_agents_for_user(
             "Please sign in to Rancher again and retry."
         )
 
-    try:
-        permissions = get_global_permissions(user_id)
-    except PermissionsError as e:
-        logging.error(f"RBAC permission resolution failed for user '{user_id}': {e}")
-        raise NoAgentAvailableError(
-            "Unable to verify your permissions with Rancher right now. "
-            "Please try again shortly or contact your administrator."
-        ) from e
-
-    filtered = filter_agent_configs(agent_configs, permissions)
+    filtered = filter_agent_configs(user_id, agent_configs)
     logging.info(
         "RBAC: user '%s' can access %d of %d agent(s)",
         user_id, len(filtered), len(agent_configs),
