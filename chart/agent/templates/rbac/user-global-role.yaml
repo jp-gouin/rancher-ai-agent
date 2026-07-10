@@ -38,16 +38,10 @@ namespacedRules:
         - get
         - watch
         - list
-    # Agent access is gated by `get` on individual AIAgentConfigs (checked via
-    # SubjectAccessReview). resourceNames lists the agents visible to all Liz
-    # users; scope additional agents to specific users with extra GlobalRoles.
     - apiGroups:
         - ai.cattle.io
       resources:
         - aiagentconfigs
-      resourceNames:
-        - rancher
-        - fleet
-        - provisioning
       verbs:
-        - get
+        - watch
+        - list

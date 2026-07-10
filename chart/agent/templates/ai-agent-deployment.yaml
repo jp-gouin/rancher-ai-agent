@@ -164,6 +164,8 @@ spec:
             value: "{{ .Values.llmMock.enabled }}"
           - name: LLM_MOCK_URL
             value: "{{ .Values.llmMock.url }}"
+          - name: RBAC_ENABLED
+            value: "{{ .Values.aiAgent.rbac.enabled }}"
         ports:
          - containerPort: 8000
         startupProbe:
