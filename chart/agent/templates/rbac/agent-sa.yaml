@@ -9,7 +9,6 @@ kind: ClusterRole
 metadata:
   name: agent-subjectaccessreview-role
 rules:
-# Used for agent RBAC: check whether a user may `get` a given AIAgentConfig.
 - apiGroups: ["authorization.k8s.io"]
   resources: ["subjectaccessreviews"]
   verbs: ["create"]

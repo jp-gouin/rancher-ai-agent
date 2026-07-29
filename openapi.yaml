@@ -838,33 +838,6 @@ components:
       example:
         message: userId not found
 
-    AvailableAgent:
-      type: object
-      description: An agent the current user may access, shaped for the UI selector
-      properties:
-        name:
-          type: string
-          description: The AIAgentConfig resource name
-        displayName:
-          type: string
-          description: Human-friendly agent name
-        description:
-          type: string
-          description: Agent description / routing hint
-        status:
-          type: string
-          description: "Readiness derived from the agent's CRD phase: ready or error"
-          enum: [ready, error]
-      required:
-        - name
-        - displayName
-        - status
-      example:
-        name: rancher
-        displayName: Rancher
-        description: Kubernetes cluster operations and Rancher resource management
-        status: ready
-
     UIToolsConfig:
       type: object
       description: Configuration for UI tools selection
