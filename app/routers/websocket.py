@@ -21,7 +21,7 @@ from langchain_core.language_models.llms import BaseLanguageModel
 from langchain_core.messages import HumanMessage, ToolMessage
 from langgraph.types import Command
 
-from ..services.auth import get_user_id_from_websocket
+from ..services.auth import get_user_id_from_token
 from ..constants import CONTEXT_PARAMETERS_SUFFIX
 
 router = APIRouter()
@@ -61,7 +61,7 @@ async def websocket_endpoint(websocket: WebSocket, thread_id: str = None, llm: B
     handles the back-and-forth communication with the client.
     """
     
-    user_id = await get_user_id_from_websocket(websocket)
+    user_id = await get_user_id_from_token(websocket.cookies)
     
     if not thread_id:
         thread_id = str(uuid.uuid4())

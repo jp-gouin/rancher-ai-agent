@@ -9,7 +9,7 @@ from kubernetes import client, config as k8s_config
 from kubernetes.client.rest import ApiException
 
 from ..services.llm import LLMManager
-from ..services.auth import get_user_id_from_request
+from ..services.auth import get_user_id_from_token
 
 router = APIRouter(prefix="/v1/api", tags=["configuration"])
 
@@ -24,30 +24,37 @@ AVAILABLE_LLM_PROVIDERS = {"ollama", "openai", "gemini", "bedrock", "generic-ope
 # Hardcoded models
 AVAILABLE_MODELS = {
     "openai": [
+        "gpt-5.5-pro",
+        "gpt-5.5",
+        "gpt-5.4-pro",
         "gpt-5.4",
+        "gpt-5.4-mini",
+        "gpt-5.4-nano",
+        "gpt-5.2-pro",
+        "gpt-5.2",
+        "gpt-5.1",
+        "gpt-5-pro",
         "gpt-5",
-        "gpt-5-turbo",
         "gpt-5-mini",
+        "gpt-5-nano",
         "o3",
         "o3-mini",
-        "o1",
-        "o1-preview",
-        "gpt-4o",
-        "gpt-4o-mini",
-        "gpt-4.1",
-        "gpt-4-turbo",
         "gpt-4",
-        "gpt-3.5-turbo",
+        "gpt-4.1",
+        "gpt-4.1-mini",
+        "gpt-4o-mini",
+        "gpt-4o",
     ],
     "gemini": [
-        "gemini-3-flash-preview",
-        "gemini-3.1-flash-lite-preview",
-        "gemini-3.1-pro-preview",
+        "gemini-3.6-flash",
+        "gemini-3.5-flash",
+        "gemini-3.5-flash-lite",
+        "gemini-3.1-pro",
+        "gemini-3.1-flash-lite",
+        "gemini-3-flash",
         "gemini-2.5-pro",
         "gemini-2.5-flash",
         "gemini-2.5-flash-lite",
-        "gemini-2.0-flash",
-        "gemini-2.0-flash-lite",
     ],
     "bedrock": [],
     "ollama": [],
@@ -132,7 +139,7 @@ async def get_models(request: Request, llm_name: str):
     For bedrock: requires 'region' and 'bearer_token'
     """
     try:
-        user_id = await get_user_id_from_request(request)
+        user_id = await get_user_id_from_token(request.cookies)
         
         if not user_id:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized")
@@ -257,7 +264,7 @@ async def get_settings(request: Request):
     Endpoint to retrieve current agent settings.
     """
     try:
-        user_id = await get_user_id_from_request(request)
+        user_id = await get_user_id_from_token(request.cookies)
         
         if not user_id:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized")
@@ -287,7 +294,7 @@ async def update_settings(settings: SettingsUpdate, request: Request):
     Requires permission to patch secrets in the agent namespace.
     """
     try:
-        user_id = await get_user_id_from_request(request)
+        user_id = await get_user_id_from_token(request.cookies)
 
         if not user_id:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized")

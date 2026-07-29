@@ -175,6 +175,8 @@ class AgentConfig(BaseModel):
     ca_bundle_ref: Optional[CABundleRef] = None
     toolset: Optional[str] = None
     human_validation_tools: list[str] = []
+    llm_model: Optional[str] = None
+    llm_model_enabled: bool = False
     ready: bool = False
 
 
@@ -320,6 +322,8 @@ def _crd_to_agent_config(crd_obj: dict) -> AgentConfig:
         ca_bundle_ref=CABundleRef(**spec["caBundleRef"]) if spec.get("caBundleRef") else None,
         toolset=spec.get("toolSet", None),
         human_validation_tools=human_validation_tools,
+        llm_model=spec.get("llmModel", None),
+        llm_model_enabled=spec.get("llmModelEnabled", False),
         ready=status.get("phase", "Failed") == "Ready"
     )
 
@@ -362,7 +366,7 @@ def _get_default_ai_agent_config_crds() -> list:
                 "namespace": NAMESPACE,
             },
             "spec": {
-                "displayName": "Fleet",
+                "displayName": "Continuous Delivery",
                 "description": FLEET_DESCRIPTION,
                 "systemPrompt": FLEET_SYSTEM_PROMPT,
                 "toolSet": "fleet",

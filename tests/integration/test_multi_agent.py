@@ -1,8 +1,12 @@
 from fastapi.testclient import TestClient
 from app.main import app
 from app.services.agent.loader import AgentConfig, AuthenticationType
-from app.services.agent.child import CHILD_TOOL_USE_INSTRUCTIONS
+from app.services.agent.child import CHILD_TOOL_USE_INSTRUCTIONS as _CHILD_TOOL_USE_INSTRUCTIONS
 from app.services.agent.supervisor import SUPERVISOR_PROMPT
+from app.services.agent.system_prompts import SEQUENTIAL_TOOL_CALLS
+
+# Child agents build their system prompt as: system_prompt + CHILD_TOOL_USE_INSTRUCTIONS + SEQUENTIAL_TOOL_CALLS
+CHILD_TOOL_USE_INSTRUCTIONS = _CHILD_TOOL_USE_INSTRUCTIONS + SEQUENTIAL_TOOL_CALLS
 from app.services.llm import LLMManager
 from app.services.memory import StorageType
 from langchain_core.language_models import FakeMessagesListChatModel
@@ -184,7 +188,7 @@ def setup_mock_mcp_servers(module_monkeypatch):
 
     app.memory_manager = MockMemoryManager()
     
-    module_monkeypatch.setattr("app.routers.websocket.get_user_id_from_websocket", AsyncMock(return_value="test-user-id"))
+    module_monkeypatch.setattr("app.routers.websocket.get_user_id_from_token", AsyncMock(return_value="test-user-id"))
     # RBAC is covered by unit tests; disable it here so build_agent doesn't reach
     # the Rancher/K8s API (SubjectAccessReview) during these flow tests.
     module_monkeypatch.setattr("app.services.agent.factory.rbac_enabled", lambda: False)
