@@ -14,9 +14,8 @@ from .loader import (
     get_ca_cert_from_secret,
     _load_k8s_config,
 )
-from ..rbac import filter_agent_configs, rbac_enabled
+from ..rbac import accessible_agent_configs, rbac_enabled, RBACError
 from ..oauth2 import get_oauth_cookie_names
-from ..auth import get_user_id_from_websocket
 from .supervisor import create_supervisor_agent, ChildAgent, SupervisorGraph
 from .child import create_child_agent
 from ._constants import NoAgentAvailableError, NeedsOauth2
@@ -46,15 +45,18 @@ async def build_agent(llm: BaseLanguageModel, websocket: WebSocket) -> tuple[Com
         NoAgentAvailableError: If no agent configurations exist or all MCP connections fail.
     """
     checkpointer = websocket.app.memory_manager.get_checkpointer()
-    all_agent_configs = load_agent_configs()
 
-    if not all_agent_configs:
-        logging.error("Failed to load any agent configurations from CRDs")
-        raise NoAgentAvailableError("No agent configurations available.")
+    # Fetch only the agents the requesting user is allowed to access. On the RBAC
+    # path this is a single scoped call to Rancher (no full CRD listing).
+    agent_configs = await _load_agents_for_user(websocket)
 
-    logging.info(f"Loaded {len(all_agent_configs)} agent configuration(s)")
+    if not agent_configs:
+        raise NoAgentAvailableError(
+            "No AI agents are available for your role. "
+            "If you believe this is an error, contact your administrator."
+        )
 
-    agent_configs = await _filter_agents_for_user(all_agent_configs, websocket)
+    logging.info(f"Loaded {len(agent_configs)} accessible agent configuration(s)")
 
     if len(agent_configs) == 1:
         agent_cfg = agent_configs[0]
@@ -365,38 +367,33 @@ def _make_insecure_http_client(
     return httpx.AsyncClient(headers=headers or {}, timeout=timeout, auth=auth, verify=False)
 
 
-async def _filter_agents_for_user(
-    agent_configs: list[AgentConfig],
-    websocket: WebSocket,
-) -> list[AgentConfig]:
+async def _load_agents_for_user(websocket: WebSocket) -> list[AgentConfig]:
     """
-    Keeps only the agents the requesting user is authorized to access, as
-    decided by Rancher/Kubernetes authorization (see ``rbac.filter_agent_configs``).
-    Cluster admins are allowed to get everything and receive the full list.
+    Load the agent configs the requesting user is allowed to access.
 
-    Fails closed: if the user's identity cannot be resolved, or they have access
-    to no agents, a ``NoAgentAvailableError`` is raised so nothing is exposed.
+    With RBAC enabled, the scoped list is fetched directly from Rancher (which
+    resolves the user's roles and group memberships), so cluster admins see all
+    agents and others see only what they're granted. With RBAC disabled, the full
+    enabled roster is loaded from the CRDs.
+
+    Fails closed: if the user's identity/permissions cannot be resolved, a
+    ``NoAgentAvailableError`` is raised so nothing is exposed.
     """
     if not rbac_enabled():
-        return agent_configs
+        return load_agent_configs()
 
-    user_id = await get_user_id_from_websocket(websocket)
-    if not user_id:
+    token = os.environ.get("RANCHER_API_TOKEN", websocket.cookies.get("R_SESS", ""))
+    if not token:
         raise NoAgentAvailableError(
             "Unable to determine your identity from the Rancher session. "
             "Please sign in to Rancher again and retry."
         )
 
-    filtered = filter_agent_configs(user_id, agent_configs)
-    logging.info(
-        "RBAC: user '%s' can access %d of %d agent(s)",
-        user_id, len(filtered), len(agent_configs),
-    )
-
-    if not filtered:
+    try:
+        return await accessible_agent_configs(token)
+    except RBACError as e:
+        logging.error(f"RBAC resolution failed: {e}")
         raise NoAgentAvailableError(
-            "No AI agents are available for your role. "
-            "If you believe this is an error, contact your administrator."
-        )
-
-    return filtered
+            "Unable to verify your permissions with Rancher right now. "
+            "Please try again shortly or contact your administrator."
+        ) from e

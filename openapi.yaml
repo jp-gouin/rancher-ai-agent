@@ -467,39 +467,6 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
 
-  /agents/available:
-    get:
-      summary: List agents available to the current user
-      description: >-
-        User-scoped. Returns only the agents the requesting user is permitted to
-        access, after server-side RBAC filtering by the user's Rancher Global
-        Permissions. This is the source of truth for the UI agent selector.
-        Fails closed (503) if permissions cannot be resolved.
-      operationId: list_available_agents
-      tags:
-        - Agents
-      responses:
-        '200':
-          description: List of accessible agents
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/AvailableAgent'
-        '401':
-          description: Unauthorized
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-        '503':
-          description: Permissions could not be resolved (fail closed)
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-
   /v1/api/oauth2/callback:
     get:
       summary: OAuth2 callback endpoint

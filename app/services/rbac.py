@@ -1,31 +1,37 @@
 """
-RBAC — filter AI agents using native Rancher/Kubernetes authorization.
+RBAC — filter AI agents using native Rancher authorization.
 
-Rather than re-implementing role matching, access is delegated to
-Kubernetes authorization via a ``SubjectAccessReview``: an agent is visible to a
-user iff that user is allowed to ``get`` the corresponding ``AIAgentConfig``
-resource. Access is therefore configured with ordinary Rancher GlobalRole rules
-scoped by ``resourceNames`` — no custom permission model, no admin-bypass logic
-(cluster admins are allowed to get everything and naturally see all agents).
+Rather than re-implementing role matching, access is delegated to Rancher: we
+ask Rancher, *as the requesting user*, for the ``AIAgentConfig`` resources they
+can see. Rancher resolves the user's full identity (user **and** group
+memberships) and applies its access rules, so an agent is visible iff the user is
+allowed to access the corresponding ``AIAgentConfig``. Access is configured with
+ordinary Rancher GlobalRole rules (e.g. ``get`` scoped by ``resourceNames``) —
+no custom permission model, and cluster admins naturally see all agents.
 
-Note: Kubernetes RBAC ``resourceNames`` constrains ``get`` (not ``list``/
-``watch``), so filtering must happen server-side, one agent at a time — which is
-exactly what the ``/agents/available`` endpoint and ``build_agent`` do.
+This is a single call per request (no per-agent SubjectAccessReview) and, unlike
+a raw Kubernetes ``list``, honors ``resourceNames`` because Rancher filters the
+collection to what the user may access.
 """
 
-import logging
 import os
 
-from kubernetes import client
-from kubernetes.client.rest import ApiException
+import httpx
 
-from .agent.loader import AgentConfig, load_agent_configs, _load_k8s_config, NAMESPACE, CRD_GROUP
+from .agent.loader import AgentConfig, _crd_to_agent_config
+from .auth import _load_rancher_url, _get_tls_verify
 
-AGENT_RESOURCE = "aiagentconfigs"
+# Rancher (Steve) aggregated-API type id for AIAgentConfig.
+AGENT_STEVE_TYPE = "ai.cattle.io.aiagentconfig"
 
 # Feature flag. When disabled, filtering is skipped and every authenticated user
 # receives the full agent list (legacy behavior). Evaluated once at import time.
 RBAC_ENABLED = os.environ.get("RBAC_ENABLED", "true").lower() == "true"
+
+
+class RBACError(Exception):
+    """Raised when the user's accessible agents cannot be resolved (fail closed)."""
+    pass
 
 
 def rbac_enabled() -> bool:
@@ -33,66 +39,45 @@ def rbac_enabled() -> bool:
     return RBAC_ENABLED
 
 
-def user_can_access_agent(user_id: str, agent_name: str) -> bool:
-    """
-    Return True if *user_id* is allowed to ``get`` the named ``AIAgentConfig``.
+def _rancher_url() -> str | None:
+    """Resolve the Rancher server URL (env override, else cluster setting)."""
+    return os.environ.get("RANCHER_URL", "").strip() or _load_rancher_url()
 
-    The decision is delegated to Rancher/Kubernetes authorization through a
-    SubjectAccessReview (run with the agent service account). Fails closed:
-    any error resolving the decision yields ``False``.
+
+async def accessible_agent_configs(token: str) -> list[AgentConfig]:
     """
-    if not user_id:
-        return False
+    Fetch the enabled ``AIAgentConfig``s the holder of *token* may access.
+
+    Queries Rancher's aggregated API with the user's session cookie, so the
+    result reflects the user's full identity (user + groups) and honors
+    ``resourceNames``-scoped access — a single call that returns the already
+    scoped objects, so there's no need to separately list every config.
+
+    Raises:
+        RBACError: If the accessible agents cannot be resolved (fail closed).
+    """
+    if not token:
+        raise RBACError("Missing Rancher session token")
+
+    base = _rancher_url()
+    if not base:
+        raise RBACError("Rancher URL is not configured and could not be resolved")
+
+    url = f"{base}/v1/{AGENT_STEVE_TYPE}"
+    headers = {"Cookie": f"R_SESS={token}", "Accept": "application/json"}
 
     try:
-        _load_k8s_config()
-        auth_api = client.AuthorizationV1Api()
-        sar = client.V1SubjectAccessReview(
-            spec=client.V1SubjectAccessReviewSpec(
-                user=user_id,
-                resource_attributes=client.V1ResourceAttributes(
-                    verb="get",
-                    group=CRD_GROUP,
-                    resource=AGENT_RESOURCE,
-                    name=agent_name,
-                    namespace=NAMESPACE,
-                ),
-            )
-        )
-        allowed = bool(auth_api.create_subject_access_review(sar).status.allowed)
-        logging.debug(
-            "SAR: user '%s' get %s/%s -> %s", user_id, AGENT_RESOURCE, agent_name, allowed
-        )
-        return allowed
-    except ApiException as e:
-        logging.error("SubjectAccessReview failed for user '%s', agent '%s': %s", user_id, agent_name, e)
-        return False
+        async with httpx.AsyncClient(timeout=5.0, verify=_get_tls_verify()) as http_client:
+            resp = await http_client.get(url, headers=headers)
     except Exception as e:
-        logging.error("SubjectAccessReview error for user '%s', agent '%s': %s", user_id, agent_name, e)
-        return False
+        raise RBACError(f"Failed to list AIAgentConfigs from Rancher: {e}") from e
 
+    if resp.status_code != 200:
+        raise RBACError(f"Rancher AIAgentConfig list returned HTTP {resp.status_code}")
 
-def filter_agent_configs(user_id: str, agent_configs: list[AgentConfig]) -> list[AgentConfig]:
-    """Return only the agents *user_id* is allowed to access (via SubjectAccessReview)."""
-    return [cfg for cfg in agent_configs if user_can_access_agent(user_id, cfg.name)]
-
-
-def load_agent_configs_for_user(user_id: str) -> list[AgentConfig]:
-    """
-    Load enabled agent configs filtered to those *user_id* may access.
-
-    When RBAC is disabled, returns all enabled configs unchanged. Otherwise
-    keeps only the agents the user is authorized to ``get`` (cluster admins see
-    all). Fails closed per agent: an agent is excluded if its access decision
-    cannot be resolved.
-    """
-    configs = load_agent_configs()
-    if not rbac_enabled():
-        return configs
-
-    filtered = filter_agent_configs(user_id, configs)
-    logging.info(
-        "RBAC: user '%s' can access %d of %d agent(s)",
-        user_id, len(filtered), len(configs),
-    )
-    return filtered
+    data = resp.json().get("data", [])
+    return [
+        _crd_to_agent_config(item)
+        for item in data
+        if item.get("spec", {}).get("enabled", True)
+    ]

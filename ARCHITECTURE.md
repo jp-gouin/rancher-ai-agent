@@ -79,7 +79,8 @@ Agent availability is gated by native **Rancher/Kubernetes authorization**, so a
 
 ### Model
 
-An agent is visible to a user **if that user is allowed to `get` the corresponding `AIAgentConfig` resource**. The decision is delegated to Kubernetes via a `SubjectAccessReview` (run with the agent service account, which has `create subjectaccessreviews`). Consequences:
+An agent is visible to a user **if that user is allowed to access the corresponding `AIAgentConfig`**. The decision is delegated to Rancher: `rbac.accessible_agent_names(token)` makes a single authenticated call to Rancher. This honors the user's **full identity — user roles and group memberships** — and respects `resourceNames`-scoped grants.
 
-- Cluster admins can `get` everything → they see all agents by default.
-- Access is granted by binding users to GlobalRoles whose `aiagentconfigs` rule uses `resourceNames` to name the allowed agents. The bundled `liz-user` role grants `get` on the default agents (`rancher`, `fleet`, `provisioning`); scope additional/restricted agents with extra GlobalRoles.
+- Cluster admins can access everything → they see all agents by default.
+- Access is granted by binding users to GlobalRoles whose `aiagentconfigs` rule names the allowed agents via `resourceNames`. The bundled `liz-user` role grants access to the default agents (`rancher`, `fleet`, `provisioning`); scope additional/restricted agents with extra GlobalRoles.
+

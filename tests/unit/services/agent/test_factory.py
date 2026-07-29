@@ -368,7 +368,7 @@ async def test_build_agent_no_configs_raises_error(mock_load_configs):
     with pytest.raises(NoAgentAvailableError) as exc_info:
         await build_agent(mock_llm, mock_websocket)
     
-    assert "No agent configurations available" in str(exc_info.value)
+    assert "No AI agents are available" in str(exc_info.value)
 
 
 # ============================================================================
