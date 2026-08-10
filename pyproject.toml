@@ -19,7 +19,7 @@ dependencies = [
     "langgraph-checkpoint-postgres==3.1.1",
     "mcp==1.29.0",
     "numpy==2.5.1",
-    "fastmcp==3.4.5",
+    "fastmcp==3.4.6",
     "kubernetes==36.0.3",
     "langchain-aws==1.6.4",
     "psycopg[binary,pool]==3.3.4",
