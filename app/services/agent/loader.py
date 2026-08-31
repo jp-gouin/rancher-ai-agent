@@ -557,9 +557,9 @@ def load_agent_configs() -> List[AgentConfig]:
     agent_configs = []
     for item in items:
         spec = item.get("spec", {})
-        if spec.get("enabled", True): 
+        if spec.get("enabled", True):
             agent_configs.append(_crd_to_agent_config(item))
-    
+
     logging.info(f"Loaded {len(agent_configs)} enabled agent configs from CRDs")
 
     return agent_configs

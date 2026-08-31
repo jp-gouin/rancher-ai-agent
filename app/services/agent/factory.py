@@ -5,7 +5,16 @@ from datetime import datetime, timezone
 
 import httpx
 from kubernetes import client
-from .loader import AuthenticationType, load_agent_configs, AgentConfig, get_basic_auth_credentials, get_header_auth_headers, get_ca_cert_from_secret, _load_k8s_config
+from .loader import (
+    AuthenticationType,
+    load_agent_configs,
+    AgentConfig,
+    get_basic_auth_credentials,
+    get_header_auth_headers,
+    get_ca_cert_from_secret,
+    _load_k8s_config,
+)
+from ..rbac import accessible_agent_configs, rbac_enabled, RBACError
 from ..oauth2 import get_oauth_cookie_names
 from .supervisor import create_supervisor_agent, ChildAgent, SupervisorGraph
 from .child import create_child_agent
@@ -36,13 +45,18 @@ async def build_agent(llm: BaseLanguageModel, websocket: WebSocket) -> tuple[Com
         NoAgentAvailableError: If no agent configurations exist or all MCP connections fail.
     """
     checkpointer = websocket.app.memory_manager.get_checkpointer()
-    agent_configs = load_agent_configs()
+
+    # Fetch only the agents the requesting user is allowed to access. On the RBAC
+    # path this is a single scoped call to Rancher (no full CRD listing).
+    agent_configs = await _load_agents_for_user(websocket)
 
     if not agent_configs:
-        logging.error("Failed to load any agent configurations from CRDs")
-        raise NoAgentAvailableError("No agent configurations available.")
+        raise NoAgentAvailableError(
+            "No AI agents are available for your role. "
+            "If you believe this is an error, contact your administrator."
+        )
 
-    logging.info(f"Loaded {len(agent_configs)} agent configuration(s)")
+    logging.info(f"Loaded {len(agent_configs)} accessible agent configuration(s)")
 
     if len(agent_configs) == 1:
         agent_cfg = agent_configs[0]
@@ -356,3 +370,35 @@ def _make_insecure_http_client(
 ) -> httpx.AsyncClient:
     """httpx_client_factory that disables TLS certificate verification."""
     return httpx.AsyncClient(headers=headers or {}, timeout=timeout, auth=auth, verify=False)
+
+
+async def _load_agents_for_user(websocket: WebSocket) -> list[AgentConfig]:
+    """
+    Load the agent configs the requesting user is allowed to access.
+
+    With RBAC enabled, the scoped list is fetched directly from Rancher (which
+    resolves the user's roles and group memberships), so cluster admins see all
+    agents and others see only what they're granted. With RBAC disabled, the full
+    enabled roster is loaded from the CRDs.
+
+    Fails closed: if the user's identity/permissions cannot be resolved, a
+    ``NoAgentAvailableError`` is raised so nothing is exposed.
+    """
+    if not rbac_enabled():
+        return load_agent_configs()
+
+    token = os.environ.get("RANCHER_API_TOKEN", websocket.cookies.get("R_SESS", ""))
+    if not token:
+        raise NoAgentAvailableError(
+            "Unable to determine your identity from the Rancher session. "
+            "Please sign in to Rancher again and retry."
+        )
+
+    try:
+        return await accessible_agent_configs(token)
+    except RBACError as e:
+        logging.error(f"RBAC resolution failed: {e}")
+        raise NoAgentAvailableError(
+            "Unable to verify your permissions with Rancher right now. "
+            "Please try again shortly or contact your administrator."
+        ) from e

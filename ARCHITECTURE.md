@@ -70,3 +70,17 @@ Because the child agent is invoked via `ainvoke()` (not as a subgraph), a `Graph
 The `cancel_human_validation_middleware` (`app/services/agent/middleware/cancel_check.py`) is a `@before_model` middleware registered on both the supervisor and child agents. After a human validation interrupt is resumed with a rejection (anything other than `"yes"`), the child returns a `ToolMessage` with `INTERRUPT_CANCEL_MESSAGE` as its content. On the next LLM turn, this middleware detects that the last message is a cancelled tool message and short-circuits the agent — it jumps directly to the `"end"` node with a cancellation reply, preventing any further LLM calls or tool executions.
 
 This relay pattern allows human-in-the-loop confirmations to originate deep inside a child agent while the client interacts exclusively with the supervisor's interrupt surface.
+
+---
+
+## RBAC — Role-Based Access Control for Agents
+
+Agent availability is gated by native **Rancher/Kubernetes authorization**, so administrators scope agent access with ordinary GlobalRole rules — no custom permission model in Liz.
+
+### Model
+
+An agent is visible to a user **if that user is allowed to access the corresponding `AIAgentConfig`**. The decision is delegated to Rancher: `rbac.accessible_agent_names(token)` makes a single authenticated call to Rancher. This honors the user's **full identity — user roles and group memberships** — and respects `resourceNames`-scoped grants.
+
+- Cluster admins can access everything → they see all agents by default.
+- Access is granted by binding users to GlobalRoles whose `aiagentconfigs` rule names the allowed agents via `resourceNames`. The bundled `liz-user` role grants access to the default agents (`rancher`, `fleet`, `provisioning`); scope additional/restricted agents with extra GlobalRoles.
+

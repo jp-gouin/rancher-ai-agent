@@ -18,6 +18,17 @@ from app.services.agent.factory import (
 from app.services.agent.loader import AuthenticationType
 
 
+@pytest.fixture(autouse=True)
+def _disable_rbac():
+    """Disable RBAC filtering for core build_agent tests.
+
+    RBAC behavior is covered separately in test_factory_rbac.py; these tests
+    focus on agent construction and MCP wiring.
+    """
+    with patch('app.services.agent.factory.rbac_enabled', return_value=False):
+        yield
+
+
 # ============================================================================
 # build_agent Tests
 # ============================================================================
@@ -357,7 +368,7 @@ async def test_build_agent_no_configs_raises_error(mock_load_configs):
     with pytest.raises(NoAgentAvailableError) as exc_info:
         await build_agent(mock_llm, mock_websocket)
     
-    assert "No agent configurations available" in str(exc_info.value)
+    assert "No AI agents are available" in str(exc_info.value)
 
 
 # ============================================================================

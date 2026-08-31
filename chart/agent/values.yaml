@@ -7,6 +7,8 @@ aiAgent:
     repository: rancher/rancher-ai-agent
     tag: v1.1.0-alpha.11
     pullPolicy: IfNotPresent
+  rbac:
+    enabled: true
 mcp:
   readOnly: false
   image:

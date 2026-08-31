@@ -63,7 +63,10 @@ def setup_mock_mcp_server(module_monkeypatch):
     app.memory_manager = MockMemoryManager()
     
     module_monkeypatch.setattr("app.routers.websocket.get_user_id_from_token", AsyncMock(return_value="test-user-id"))
-    
+    # RBAC is covered by unit tests; disable it here so build_agent doesn't reach
+    # the Rancher/K8s API (SubjectAccessReview) during these flow tests.
+    module_monkeypatch.setattr("app.services.agent.factory.rbac_enabled", lambda: False)
+
     mock_agent_config = AgentConfig(
         name="test-agent",
         displayName="Test Agent",
