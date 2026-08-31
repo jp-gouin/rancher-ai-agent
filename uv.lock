@@ -1418,7 +1418,7 @@ wheels = [
 
 [[package]]
 name = "langchain-aws"
-version = "1.7.0"
+version = "1.7.4"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "boto3" },
@@ -1426,9 +1426,9 @@ dependencies = [
     { name = "numpy" },
     { name = "pydantic" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/64/ca/88fd983e4ffb2b0a765efdd57da75b99be9f2077bedf75e57a7b7d6ac843/langchain_aws-1.7.0.tar.gz", hash = "sha256:e4e8d578b4be8fd3ad970373fc72c3e321fea7f955cb6c075464e30636ec583d", size = 609279, upload-time = "2026-08-05T18:45:38.166Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/25/5c/a34197f3e3cb5a6d67f60542dd40df4a3710c63a1d41239c0bf20fab6dd9/langchain_aws-1.7.4.tar.gz", hash = "sha256:93b814fb55aa8464d152b05b985cd6664ddf8fc37e1dc2717b9b0bf903ea551b", size = 675188, upload-time = "2026-08-26T14:13:09.269Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/e1/4c/85e6c625b04c2637ad053c28ed7eda9aa4b89f77e6763b3a41f126427ded/langchain_aws-1.7.0-py3-none-any.whl", hash = "sha256:25ccaebeec0bd718df4a1dce44c725591e177690bc19df7caa0cd2d601df27a0", size = 214878, upload-time = "2026-08-05T18:45:36.583Z" },
+    { url = "https://files.pythonhosted.org/packages/78/94/5c0dcb02194c984556a705e3f4981bcaaf3a16244b660972a475348c148d/langchain_aws-1.7.4-py3-none-any.whl", hash = "sha256:0d6a30e0b503fc66b140ccd35fddbdeb7171c33028bac03933274d86c99288a0", size = 233224, upload-time = "2026-08-26T14:13:08.039Z" },
 ]
 
 [[package]]
@@ -2830,7 +2830,7 @@ requires-dist = [
     { name = "kopf", specifier = "==1.44.6" },
     { name = "kubernetes", specifier = "==36.0.3" },
     { name = "langchain", specifier = "==1.3.14" },
-    { name = "langchain-aws", specifier = "==1.7.0" },
+    { name = "langchain-aws", specifier = "==1.7.4" },
     { name = "langchain-community", specifier = "==0.4.2" },
     { name = "langchain-google-genai", specifier = "==4.3.7" },
     { name = "langchain-mcp-adapters", specifier = "==0.3.2" },
